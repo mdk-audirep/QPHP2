@@ -162,12 +162,7 @@ final class OpenAIClient
             $messages[] = [
                 'role' => 'system',
                 // 'content' => Prompt::systemPrompt()
-                'content' => [
-                                        [
-                                                'type' => 'text',
-                                                'text' => Prompt::systemPrompt()
-                                        ]
-                                ]
+                'content' => $this->buildTextContent('system', Prompt::systemPrompt())
             ];
         }
 
@@ -175,12 +170,7 @@ final class OpenAIClient
             $messages[] = [
                 'role' => 'system',
                 // 'content' => 'Résumé mémoire : ' . $session['summary']
-                'content' => [
-                                        [
-                                                'type' => 'text',
-                                                'text' => 'Résumé mémoire : ' . $session['summary']
-                                        ]
-                                ]
+                'content' => $this->buildTextContent('system', 'Résumé mémoire : ' . $session['summary'])
             ];
         }
 
@@ -188,24 +178,14 @@ final class OpenAIClient
             $messages[] = [
                 'role' => $turn['role'],
                 // 'content' => $turn['content']
-                'content' => [
-                                        [
-                                                'type' => 'text',
-                                                'text' => $turn['content']
-                                        ]
-                                ]
+                'content' => $this->buildTextContent($turn['role'], $turn['content'])
             ];
         }
 
         $messages[] = [
             'role' => 'user',
             // 'content' => $userMessage
-                                'content' => [
-                                        [
-                                                'type' => 'text',
-                                                'text' => $userMessage
-                                        ]
-                                ]
+            'content' => $this->buildTextContent('user', $userMessage)
         ];
 
         $payload = [
@@ -247,5 +227,18 @@ final class OpenAIClient
             $payload['max_output_tokens'] = 20000;
         }
         return $payload;
+    }
+    /**
+     * @return array<int, array{type: string, text: string}>
+     */
+    private function buildTextContent(string $role, string $text): array
+    {
+        $normalizedRole = strtolower(trim($role));
+        $type = $normalizedRole === 'assistant' ? 'output_text' : 'input_text';
+
+        return [[
+            'type' => $type,
+            'text' => $text,
+        ]];
     }
 }
