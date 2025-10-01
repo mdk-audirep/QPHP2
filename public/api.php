@@ -174,7 +174,47 @@ function responseContinue(array $data, bool $finalOverride): void
 
     $client = new OpenAIClient();
     $payload = $client->buildPayload($session, (string) $data['userMessage'], $finalOverride);
-    $result = $client->send($payload);
+
+    header('Content-Type: text/event-stream; charset=utf-8');
+    header('Cache-Control: no-cache');
+    header('Connection: keep-alive');
+    header('X-Accel-Buffering: no');
+
+    if (function_exists('apache_setenv')) {
+        @apache_setenv('no-gzip', '1');
+    }
+
+    while (ob_get_level() > 0) {
+        ob_end_flush();
+    }
+
+    ob_implicit_flush(true);
+
+    $sendEvent = static function (array $event): void {
+        echo 'data: ' . json_encode($event, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . "\n\n";
+        @ob_flush();
+        flush();
+    };
+
+    try {
+        $result = $client->send($payload, static function (string $deltaText) use ($sendEvent): void {
+            if ($deltaText === '') {
+                return;
+            }
+
+            $sendEvent([
+                'type' => 'delta',
+                'text' => $deltaText,
+            ]);
+        });
+    } catch (\Throwable $exception) {
+        http_response_code(500);
+        $sendEvent([
+            'type' => 'error',
+            'message' => $exception->getMessage(),
+        ]);
+        return;
+    }
 
     $assistantMarkdown = ResponseFormatter::extractContent($result);
     $phase = $finalOverride ? 'final' : ResponseFormatter::detectPhase($assistantMarkdown, $session['phase']);
@@ -185,13 +225,18 @@ function responseContinue(array $data, bool $finalOverride): void
     SessionStore::mergeMemory($session, $data['memoryDelta'] ?? null);
     SessionStore::update($session);
 
-    echo json_encode([
+    $payload = [
         'sessionId' => $session['id'],
         'promptVersion' => $session['promptVersion'],
         'phase' => $phase,
         'assistantMarkdown' => $assistantMarkdown,
         'memorySnapshot' => $session['memory'],
         'finalMarkdownPresent' => ResponseFormatter::hasFinalMarkdown($assistantMarkdown),
-        'nextAction' => $finalOverride ? 'persist_and_render' : 'ask_user'
+        'nextAction' => $finalOverride ? 'persist_and_render' : 'ask_user',
+    ];
+
+    $sendEvent([
+        'type' => 'result',
+        'payload' => $payload,
     ]);
 }

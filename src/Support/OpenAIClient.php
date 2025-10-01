@@ -3,10 +3,10 @@
 namespace Questionnaire\Support;
 
 use GuzzleHttp\Client;
-use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\ClientException;
-use GuzzleHttp\Exception\ServerException;
 use GuzzleHttp\Exception\RequestException;
+use GuzzleHttp\Exception\ServerException;
+use Psr\Http\Message\StreamInterface;
 
 final class OpenAIClient
 {
@@ -45,8 +45,8 @@ final class OpenAIClient
 
         // return $payload;
     // }
-		public function send(array $payload): array
-		{
+                public function send(array $payload, ?callable $onDelta = null): array
+                {
 			$headers = [
 				'Authorization' => 'Bearer ' . Env::get('OPENAI_API_KEY'),
 				'Content-Type'  => 'application/json',
@@ -62,17 +62,17 @@ final class OpenAIClient
 					'stream'   => $payload['stream'] ?? null,
 				], JSON_UNESCAPED_UNICODE));
 
-				$response = $this->client->post('responses', [
-					'headers' => $headers,
-					// mieux que 'body' : laisse Guzzle encoder et définir content-length
-					'json'    => $payload,
+                                $response = $this->client->post('responses', [
+                                        'headers' => $headers,
+                                        // mieux que 'body' : laisse Guzzle encoder et définir content-length
+                                        'json'    => $payload,
 					// ce 'stream' indique à Guzzle de ne pas bufferiser la réponse côté client PHP.
 					// (OK pour SSE ; ta méthode decodeStream() devra lire le flux chunk par chunk)
 					'stream'  => true,
 					'timeout' => 120,
 				]);
 
-				$decoded = $this->decodeStream((string) $response->getBody());
+                                $decoded = $this->decodeStream($response->getBody(), $onDelta);
 				if (!is_array($decoded)) {
 					throw new \RuntimeException('Réponse OpenAI illisible');
 				}
@@ -101,40 +101,103 @@ final class OpenAIClient
 				throw new \RuntimeException('Erreur réseau OpenAI: ' . $e->getMessage(), $e->getCode(), $e);
 			}
 		}
-    private function decodeStream(string $raw): array
+    private function decodeStream(StreamInterface $stream, ?callable $onDelta): array
     {
-        $events = preg_split('/\r?\n\r?\n/', trim($raw));
         $output = [];
         $fallback = null;
+        $buffer = '';
+        $eventLines = [];
+        $done = false;
+        $raw = '';
 
-        foreach ($events as $event) {
-            $lines = preg_split('/\r?\n/', trim($event));
+        $processEvent = function (array $lines) use (&$output, &$fallback, $onDelta, &$done): void {
+            if ($done) {
+                return;
+            }
+
+            $dataLines = [];
             foreach ($lines as $line) {
                 if (!str_starts_with($line, 'data:')) {
                     continue;
                 }
 
-                $json = trim(substr($line, 5));
-                if ($json === '' || $json === '[DONE]') {
-                    continue;
+                $dataLines[] = ltrim(substr($line, 5));
+            }
+
+            if ($dataLines === []) {
+                return;
+            }
+
+            $json = trim(implode("\n", $dataLines));
+            if ($json === '' || $json === '[DONE]') {
+                if ($json === '[DONE]') {
+                    $done = true;
                 }
 
-                $decoded = json_decode($json, true);
-                if (!is_array($decoded)) {
-                    continue;
+                return;
+            }
+
+            $decoded = json_decode($json, true);
+            if (!is_array($decoded)) {
+                return;
+            }
+
+            $fallback = $decoded;
+
+            if (isset($decoded['output']) && is_array($decoded['output'])) {
+                $output = $decoded['output'];
+            }
+
+            if (isset($decoded['delta']['output']) && is_array($decoded['delta']['output'])) {
+                foreach ($decoded['delta']['output'] as $chunk) {
+                    $output[] = $chunk;
                 }
 
-                $fallback = $decoded;
-
-                if (isset($decoded['output']) && is_array($decoded['output'])) {
-                    $output = $decoded['output'];
-                }
-
-                if (isset($decoded['delta']['output']) && is_array($decoded['delta']['output'])) {
-                    foreach ($decoded['delta']['output'] as $chunk) {
-                        $output[] = $chunk;
+                if ($onDelta !== null) {
+                    $text = ResponseFormatter::stringifyDeltaOutput($decoded['delta']['output']);
+                    if ($text !== '') {
+                        $onDelta($text);
                     }
                 }
+            }
+        };
+
+        while (!$done && !$stream->eof()) {
+            $chunk = $stream->read(8192);
+            if ($chunk === '') {
+                usleep(10000);
+                continue;
+            }
+
+            $buffer .= $chunk;
+            $raw .= $chunk;
+
+            while (!$done) {
+                $newlinePosition = strpos($buffer, "\n");
+                if ($newlinePosition === false) {
+                    break;
+                }
+
+                $line = substr($buffer, 0, $newlinePosition);
+                $buffer = substr($buffer, $newlinePosition + 1);
+                $line = rtrim($line, "\r");
+
+                if ($line === '') {
+                    $processEvent($eventLines);
+                    $eventLines = [];
+                } else {
+                    $eventLines[] = $line;
+                }
+            }
+        }
+
+        if (!$done && ($eventLines !== [] || $buffer !== '')) {
+            if ($buffer !== '') {
+                $eventLines[] = rtrim($buffer, "\r");
+            }
+
+            if ($eventLines !== []) {
+                $processEvent($eventLines);
             }
         }
 

@@ -62,6 +62,19 @@ final class ResponseFormatter
     }
 
     /**
+     * @param array<int, mixed> $deltaOutput
+     */
+    public static function stringifyDeltaOutput(array $deltaOutput): string
+    {
+        $buffer = '';
+        foreach ($deltaOutput as $chunk) {
+            $buffer .= self::stringifyChunk($chunk);
+        }
+
+        return $buffer;
+    }
+
+    /**
      * @param mixed $chunk
      */
     private static function stringifyChunk(mixed $chunk): string

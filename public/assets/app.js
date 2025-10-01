@@ -251,45 +251,49 @@ function pushMessage(role, content) {
   renderMessages();
 
   if (role === 'assistant') {
-    const normalizedContent = normalizeText(content);
-    let hasStateChange = false;
+    handleAssistantState(content);
+  }
+}
 
-    if (normalizedContent.includes('question 7')) {
-      state.currentQuestionStep = 7;
+function handleAssistantState(content) {
+  const normalizedContent = normalizeText(content);
+  let hasStateChange = false;
+
+  if (normalizedContent.includes('question 7')) {
+    state.currentQuestionStep = 7;
+    state.showThemes = true;
+    state.showSubThemes = false;
+    state.activeThematicId = null;
+    state.activeThematicLabel = null;
+    hasStateChange = true;
+  } else if (normalizedContent.includes('question 11')) {
+    const thematicMatch = state.thematics.find((theme) =>
+      normalizedContent.includes(normalizeText(theme.label))
+    );
+    state.currentQuestionStep = 11;
+    if (thematicMatch) {
+      state.activeThematicId = thematicMatch.id;
+      state.activeThematicLabel = thematicMatch.label;
+      state.showThemes = false;
+      state.showSubThemes = true;
+    } else {
+      state.activeThematicId = null;
+      state.activeThematicLabel = null;
       state.showThemes = true;
       state.showSubThemes = false;
-      state.activeThematicId = null;
-      state.activeThematicLabel = null;
-      hasStateChange = true;
-    } else if (normalizedContent.includes('question 11')) {
-      const thematicMatch = state.thematics.find((theme) =>
-        normalizedContent.includes(normalizeText(theme.label))
-      );
-      state.currentQuestionStep = 11;
-      if (thematicMatch) {
-        state.activeThematicId = thematicMatch.id;
-        state.activeThematicLabel = thematicMatch.label;
-        state.showThemes = false;
-        state.showSubThemes = true;
-      } else {
-        state.activeThematicId = null;
-        state.activeThematicLabel = null;
-        state.showThemes = true;
-        state.showSubThemes = false;
-      }
-      hasStateChange = true;
-    } else if (normalizedContent.includes('question')) {
-      state.currentQuestionStep = null;
-      state.showThemes = false;
-      state.showSubThemes = false;
-      state.activeThematicId = null;
-      state.activeThematicLabel = null;
-      hasStateChange = true;
     }
+    hasStateChange = true;
+  } else if (normalizedContent.includes('question')) {
+    state.currentQuestionStep = null;
+    state.showThemes = false;
+    state.showSubThemes = false;
+    state.activeThematicId = null;
+    state.activeThematicLabel = null;
+    hasStateChange = true;
+  }
 
-    if (hasStateChange) {
-      renderThematics();
-    }
+  if (hasStateChange) {
+    renderThematics();
   }
 }
 
@@ -307,6 +311,157 @@ function buildMemoryDelta() {
         }))
       }))
     }
+  };
+}
+
+function createStreamingAssistantMessage() {
+  const message = {
+    role: 'assistant',
+    content: '',
+    html: '<p><em>…</em></p>'
+  };
+  state.messages.push(message);
+  renderMessages();
+  return message;
+}
+
+function updateStreamingAssistantMessage(message, delta) {
+  if (!delta) {
+    return;
+  }
+
+  message.content += delta;
+  message.html = renderMarkdown(message.content);
+  renderMessages();
+}
+
+function finalizeStreamingAssistantMessage(message, content) {
+  const finalContent = content || message.content;
+  message.content = finalContent;
+  message.html = renderMarkdown(finalContent);
+  renderMessages();
+  handleAssistantState(finalContent);
+}
+
+function parseSseEvent(rawEvent) {
+  const lines = rawEvent.split('\n');
+  const dataLines = [];
+  lines.forEach((line) => {
+    if (line.startsWith('data:')) {
+      dataLines.push(line.slice(5).trimStart());
+    }
+  });
+
+  if (dataLines.length === 0) {
+    return null;
+  }
+
+  const jsonString = dataLines.join('\n').trim();
+  if (!jsonString || jsonString === '[DONE]') {
+    return null;
+  }
+
+  try {
+    return JSON.parse(jsonString);
+  } catch (error) {
+    console.error('Impossible de décoder un événement SSE', error, jsonString);
+    return null;
+  }
+}
+
+async function streamApi(endpoint, body) {
+  const response = await fetch(`api.php?action=${endpoint}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+
+  const contentType = response.headers.get('Content-Type') || '';
+
+  if (!contentType.includes('text/event-stream')) {
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      const message = payload?.message || 'Erreur réseau';
+      throw new Error(message);
+    }
+
+    return {
+      envelope: payload,
+      assistantMarkdown: payload?.assistantMarkdown || '',
+      streamed: false
+    };
+  }
+
+  if (!response.body) {
+    throw new Error("Le streaming n'est pas supporté par ce navigateur.");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder('utf-8');
+  const message = createStreamingAssistantMessage();
+  let buffer = '';
+  let finalEnvelope = null;
+  let shouldStop = false;
+
+  const processBuffer = () => {
+    let delimiterIndex;
+    while ((delimiterIndex = buffer.indexOf('\n\n')) !== -1) {
+      const rawEvent = buffer.slice(0, delimiterIndex);
+      buffer = buffer.slice(delimiterIndex + 2);
+      const event = parseSseEvent(rawEvent);
+      if (!event) {
+        continue;
+      }
+
+      if (event.type === 'delta') {
+        updateStreamingAssistantMessage(message, event.text || '');
+      } else if (event.type === 'result') {
+        finalEnvelope = event.payload || null;
+        shouldStop = true;
+      } else if (event.type === 'error') {
+        throw new Error(event.message || 'Erreur OpenAI');
+      }
+    }
+  };
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) {
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      processBuffer();
+      if (shouldStop) {
+        await reader.cancel().catch(() => {});
+        break;
+      }
+    }
+
+    buffer += decoder.decode(new Uint8Array(), { stream: false });
+    processBuffer();
+  } catch (error) {
+    if (state.messages[state.messages.length - 1] === message) {
+      state.messages.pop();
+      renderMessages();
+    }
+    throw error;
+  }
+
+  if (!finalEnvelope) {
+    if (state.messages[state.messages.length - 1] === message) {
+      state.messages.pop();
+      renderMessages();
+    }
+    throw new Error('Réponse incomplète reçue depuis le serveur.');
+  }
+
+  finalizeStreamingAssistantMessage(message, finalEnvelope.assistantMarkdown || message.content);
+
+  return {
+    envelope: finalEnvelope,
+    assistantMarkdown: finalEnvelope.assistantMarkdown || message.content,
+    streamed: true
   };
 }
 
@@ -354,14 +509,25 @@ async function handleSubmit(event) {
   updateStatus('Génération en cours…');
 
   try {
-    const envelope = await callApi(endpoint, requestBody);
+    let envelope;
+
+    if (!state.sessionId) {
+      envelope = await callApi(endpoint, requestBody);
+      pushMessage('assistant', envelope.assistantMarkdown);
+    } else {
+      const result = await streamApi(endpoint, requestBody);
+      envelope = result.envelope;
+      if (!result.streamed) {
+        pushMessage('assistant', envelope.assistantMarkdown);
+      }
+    }
+
     state.sessionId = envelope.sessionId;
     state.phase = envelope.phase;
     state.memory = envelope.memorySnapshot || {};
     if (Array.isArray(state.memory.collecte?.thematiques)) {
       syncThematics(state.memory.collecte.thematiques);
     }
-    pushMessage('assistant', envelope.assistantMarkdown);
     if (envelope.phase === 'final' && envelope.finalMarkdownPresent) {
       elements.finalMarkdown.value = envelope.assistantMarkdown;
     }
