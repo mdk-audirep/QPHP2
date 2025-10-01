@@ -1,0 +1,16 @@
+{
+    "name": "questionnaire/masterpie",
+    "description": "Application QuestionnaireMasterPIE en PHP",
+    "type": "project",
+    "require": {
+        "php": ">=8.1",
+        "ext-mbstring": "*",
+        "guzzlehttp/guzzle": "^7.9",
+        "vlucas/phpdotenv": "^5.6"
+    },
+    "autoload": {
+        "psr-4": {
+            "Questionnaire\\": "src/"
+        }
+    }
+}
