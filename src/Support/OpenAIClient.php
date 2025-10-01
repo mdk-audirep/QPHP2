@@ -233,7 +233,8 @@ final class OpenAIClient
      */
     private function buildTextContent(string $role, string $text): array
     {
-        $type = $role === 'assistant' ? 'output_text' : 'input_text';
+        $normalizedRole = strtolower(trim($role));
+        $type = $normalizedRole === 'assistant' ? 'output_text' : 'input_text';
 
         return [[
             'type' => $type,
