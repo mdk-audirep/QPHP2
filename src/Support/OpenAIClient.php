@@ -202,7 +202,7 @@ final class OpenAIClient
 					'type' => 'web_search'
 				]		
 				],
-			    'tool_choice': 'required',
+			    'tool_choice' => 'required',
             // 'tools' => [
                 // ['type' => 'file_search'],
                 // ['type' => 'web_search']
@@ -243,4 +243,5 @@ final class OpenAIClient
         ]];
     }
 }
+
 
