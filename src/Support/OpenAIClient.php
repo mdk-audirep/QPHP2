@@ -162,12 +162,12 @@ final class OpenAIClient
             $messages[] = [
                 'role' => 'system',
                 // 'content' => Prompt::systemPrompt()
-				'content' => [
-					[
-						'type' => 'input_text',
-						'text' => Prompt::systemPrompt()
-					]
-				]				
+                'content' => [
+                                        [
+                                                'type' => 'text',
+                                                'text' => Prompt::systemPrompt()
+                                        ]
+                                ]
             ];
         }
 
@@ -175,12 +175,12 @@ final class OpenAIClient
             $messages[] = [
                 'role' => 'system',
                 // 'content' => 'Résumé mémoire : ' . $session['summary']
-				'content' => [
-					[
-						'type' => 'input_text',
-						'text' => 'Résumé mémoire : ' . $session['summary']
-					]
-				]				
+                'content' => [
+                                        [
+                                                'type' => 'text',
+                                                'text' => 'Résumé mémoire : ' . $session['summary']
+                                        ]
+                                ]
             ];
         }
 
@@ -188,24 +188,24 @@ final class OpenAIClient
             $messages[] = [
                 'role' => $turn['role'],
                 // 'content' => $turn['content']
-				'content' => [
-					[
-						'type' => 'input_text',
-						'text' => $turn['content']
-					]
-				]				
+                'content' => [
+                                        [
+                                                'type' => 'text',
+                                                'text' => $turn['content']
+                                        ]
+                                ]
             ];
         }
 
         $messages[] = [
             'role' => 'user',
             // 'content' => $userMessage
-				'content' => [
-					[
-						'type' => 'input_text',
-						'text' => $userMessage
-					]
-				]			
+                                'content' => [
+                                        [
+                                                'type' => 'text',
+                                                'text' => $userMessage
+                                        ]
+                                ]
         ];
 
         $payload = [
