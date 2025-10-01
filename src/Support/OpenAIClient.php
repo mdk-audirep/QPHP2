@@ -253,7 +253,7 @@ final class OpenAIClient
 
         $payload = [
             'model' => 'gpt-5',
-            'reasoning' => ['effort' => 'medium'],
+            'reasoning' => ['effort' => 'high'],
             'stream' => true,
             'parallel_tool_calls' => true,
 			'tools' => [
@@ -306,6 +306,7 @@ final class OpenAIClient
         ]];
     }
 }
+
 
 
 
