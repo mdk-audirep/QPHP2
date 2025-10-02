@@ -12,6 +12,10 @@ final class CollecteFlow
             'id' => 'entreprise',
             'order' => 1,
             'label' => 'Entreprise',
+            // Utilisé comme question de repli lorsque l'Outil Recherche Auto ne détecte
+            // aucune enseigne dans la requête utilisateur. La formulation exacte n'est
+            // plus imposée par le système, mais ce texte sert de base pour relancer
+            // l'utilisateur si nécessaire.
             'prompt' => "Quel est le nom de l'entreprise, son secteur d'activité, son positionnement et ses principaux concurrents ?",
         ],
         [
