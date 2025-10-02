@@ -295,45 +295,138 @@ const QUESTION_STEPS = {
   SUBTHEMES: 10
 };
 
+const FALLBACK_SUBTHEMES_PENDING_ID = 'collecte-subthemes-fallback';
+
+function syncQuestionStepFromCollecteState() {
+  const pending = state.collecteState?.pendingQuestion || null;
+  const previous = {
+    currentQuestionStep: state.currentQuestionStep,
+    showThemes: state.showThemes,
+    showSubThemes: state.showSubThemes,
+    activeThematicId: state.activeThematicId,
+    activeThematicLabel: state.activeThematicLabel
+  };
+
+  let nextCurrentStep = null;
+  let nextShowThemes = false;
+  let nextShowSubThemes = false;
+  let nextActiveThematicId = null;
+  let nextActiveThematicLabel = null;
+
+  if (pending) {
+    const normalizedId = typeof pending.id === 'string' ? normalizeText(pending.id) : '';
+
+    if (normalizedId === 'thematiques') {
+      nextCurrentStep = QUESTION_STEPS.THEMES;
+      nextShowThemes = true;
+      nextShowSubThemes = false;
+    } else if (
+      normalizedId.includes('subtheme') ||
+      normalizedId.includes('sous_thematique') ||
+      normalizedId.includes('sousthematique') ||
+      normalizedId.includes('sous-thematique')
+    ) {
+      nextCurrentStep = QUESTION_STEPS.SUBTHEMES;
+      nextShowThemes = false;
+      nextShowSubThemes = true;
+
+      let thematicMatch = null;
+      if (pending.thematicId) {
+        thematicMatch = state.thematics.find((theme) => theme.id === pending.thematicId);
+      }
+
+      if (!thematicMatch && pending.thematicLabel) {
+        const normalizedLabel = normalizeText(pending.thematicLabel);
+        thematicMatch = state.thematics.find((theme) => normalizeText(theme.label) === normalizedLabel);
+      }
+
+      if (!thematicMatch && typeof pending.label === 'string') {
+        const normalizedLabel = normalizeText(pending.label);
+        thematicMatch = state.thematics.find((theme) => normalizedLabel.includes(normalizeText(theme.label)));
+      }
+
+      if (thematicMatch) {
+        nextActiveThematicId = thematicMatch.id;
+        nextActiveThematicLabel = thematicMatch.label;
+      } else {
+        nextActiveThematicId = previous.activeThematicId;
+        if (typeof pending.thematicLabel === 'string' && pending.thematicLabel) {
+          nextActiveThematicLabel = pending.thematicLabel;
+        } else if (typeof pending.label === 'string' && pending.label) {
+          nextActiveThematicLabel = pending.label;
+        } else {
+          nextActiveThematicLabel = previous.activeThematicLabel;
+        }
+      }
+    } else {
+      const order = typeof pending.order === 'number' ? pending.order : null;
+      const index = typeof pending.index === 'number' ? pending.index + 1 : null;
+      nextCurrentStep = order ?? index ?? null;
+    }
+  }
+
+  state.currentQuestionStep = nextCurrentStep;
+  state.showThemes = nextShowThemes;
+  state.showSubThemes = nextShowSubThemes;
+  state.activeThematicId = nextActiveThematicId;
+  state.activeThematicLabel = nextActiveThematicLabel;
+
+  const hasStateChange = (
+    previous.currentQuestionStep !== state.currentQuestionStep ||
+    previous.showThemes !== state.showThemes ||
+    previous.showSubThemes !== state.showSubThemes ||
+    previous.activeThematicId !== state.activeThematicId ||
+    previous.activeThematicLabel !== state.activeThematicLabel
+  );
+
+  renderThematics();
+
+  return hasStateChange;
+}
+
 function handleAssistantState(content) {
+  syncQuestionStepFromCollecteState();
+
+  if (state.collecteState?.pendingQuestion) {
+    return;
+  }
+
   const normalizedContent = normalizeText(content);
-  let hasStateChange = false;
 
   if (normalizedContent.includes(`question ${QUESTION_STEPS.THEMES}`)) {
-    state.currentQuestionStep = QUESTION_STEPS.THEMES;
-    state.showThemes = true;
-    state.showSubThemes = false;
-    state.activeThematicId = null;
-    state.activeThematicLabel = null;
-    hasStateChange = true;
-  } else if (normalizedContent.includes(`question ${QUESTION_STEPS.SUBTHEMES}`)) {
+    state.collecteState.pendingQuestion = {
+      id: 'thematiques',
+      order: QUESTION_STEPS.THEMES,
+      label: 'Thématiques',
+      prompt: '',
+      index: QUESTION_STEPS.THEMES - 1
+    };
+    syncQuestionStepFromCollecteState();
+    return;
+  }
+
+  if (normalizedContent.includes(`question ${QUESTION_STEPS.SUBTHEMES}`)) {
     const thematicMatch = state.thematics.find((theme) =>
       normalizedContent.includes(normalizeText(theme.label))
     );
-    state.currentQuestionStep = QUESTION_STEPS.SUBTHEMES;
-    if (thematicMatch) {
-      state.activeThematicId = thematicMatch.id;
-      state.activeThematicLabel = thematicMatch.label;
-      state.showThemes = false;
-      state.showSubThemes = true;
-    } else {
-      state.activeThematicId = null;
-      state.activeThematicLabel = null;
-      state.showThemes = true;
-      state.showSubThemes = false;
-    }
-    hasStateChange = true;
-  } else if (normalizedContent.includes('question')) {
-    state.currentQuestionStep = null;
-    state.showThemes = false;
-    state.showSubThemes = false;
-    state.activeThematicId = null;
-    state.activeThematicLabel = null;
-    hasStateChange = true;
+
+    state.collecteState.pendingQuestion = {
+      id: FALLBACK_SUBTHEMES_PENDING_ID,
+      order: QUESTION_STEPS.SUBTHEMES,
+      label: 'Sous-thématiques',
+      prompt: '',
+      index: QUESTION_STEPS.SUBTHEMES - 1,
+      thematicId: thematicMatch?.id ?? null,
+      thematicLabel: thematicMatch?.label ?? state.activeThematicLabel ?? null
+    };
+
+    syncQuestionStepFromCollecteState();
+    return;
   }
 
-  if (hasStateChange) {
-    renderThematics();
+  if (normalizedContent.includes('question') && state.collecteState?.pendingQuestion) {
+    state.collecteState.pendingQuestion = null;
+    syncQuestionStepFromCollecteState();
   }
 }
 
@@ -571,8 +664,10 @@ async function handleSubmit(event) {
     state.phase = envelope.phase;
     state.memory = envelope.memorySnapshot || {};
     state.collecteState = envelope.collecteState || defaultCollecteState();
+    syncQuestionStepFromCollecteState();
     if (Array.isArray(state.memory.collecte?.thematiques)) {
       syncThematics(state.memory.collecte.thematiques);
+      syncQuestionStepFromCollecteState();
     }
     if (envelope.phase === 'final' && envelope.finalMarkdownPresent) {
       elements.finalMarkdown.value = envelope.assistantMarkdown;
