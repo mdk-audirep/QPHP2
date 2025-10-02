@@ -312,5 +312,50 @@ namespace {
         throw new RuntimeException('Les sources web formatées sont incorrectes.');
     }
 
+    $regressionPayload = [
+        'response' => [
+            'output' => [
+                [
+                    'content' => [
+                        [
+                            'type' => 'output_text',
+                            'text' => 'Hello world',
+                            'annotations' => [
+                                ['type' => 'file_citation', 'document_id' => 'doc_alpha'],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ],
+        'tool_calls' => [
+            [
+                'type' => 'file_search',
+                'file_search_call' => [
+                    'results' => [
+                        [
+                            'document_id' => 'doc_alpha',
+                            'file' => ['filename' => 'alpha.txt'],
+                            'content' => [
+                                'Snippet from doc',
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ],
+    ];
+
+    $regressionSources = ResponseFormatter::extractSources($regressionPayload);
+
+    $expectedRegression = [
+        'internal' => ['alpha.txt — Snippet from doc'],
+        'web' => [],
+    ];
+
+    if ($regressionSources !== $expectedRegression) {
+        throw new RuntimeException('Regression sources incorrectes : ' . json_encode($regressionSources, JSON_UNESCAPED_UNICODE));
+    }
+
     echo "ResponseFormatter sources test passed with search result labels.\n";
 }
