@@ -95,6 +95,13 @@ body {
     font-size: 1.1rem;
 }
 
+.checkbox-panel .thematic-hint {
+    margin: 0 0 0.75rem;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    line-height: 1.4;
+}
+
 .thematic {
     background: rgba(17, 24, 39, 0.7);
     border: 1px solid var(--border);
@@ -164,6 +171,31 @@ body {
 .add-sub button:hover,
 .add-thematic button:hover {
     background: rgba(56, 189, 248, 0.25);
+}
+
+.validate-thematics {
+    margin-top: 1rem;
+    width: 100%;
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.85) 0%, rgba(14, 165, 233, 0.95) 100%);
+    border: 1px solid rgba(56, 189, 248, 0.5);
+    color: white;
+    font-weight: 600;
+    padding: 0.65rem 1rem;
+    border-radius: 0.75rem;
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+}
+
+.validate-thematics:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
+.validate-thematics:not(:disabled):hover {
+    transform: translateY(-1px);
+    box-shadow: 0 10px 24px rgba(56, 189, 248, 0.35);
 }
 
 .main-panel {

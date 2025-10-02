@@ -68,8 +68,54 @@ const elements = {
   checkboxPanel: document.querySelector('.checkbox-panel'),
   addThematicButton: document.getElementById('addThematicButton'),
   newThematicInput: document.getElementById('newThematicInput'),
-  finalMarkdown: document.getElementById('finalMarkdown')
+  finalMarkdown: document.getElementById('finalMarkdown'),
+  validateThematicsButton: document.getElementById('validateThematicsButton')
 };
+
+function hasAnyThematicSelection() {
+  return state.thematics.some((theme) => theme.checked || theme.subs.some((sub) => sub.checked));
+}
+
+function collectSelectedThematics() {
+  return state.thematics.reduce((acc, theme) => {
+    const selectedSubs = theme.subs.filter((sub) => sub.checked).map((sub) => sub.label);
+    if (theme.checked || selectedSubs.length > 0) {
+      acc.push({
+        label: theme.label,
+        subs: selectedSubs,
+        themeSelected: theme.checked
+      });
+    }
+    return acc;
+  }, []);
+}
+
+function formatSelectedThematicsMessage() {
+  const selections = collectSelectedThematics();
+  if (selections.length === 0) {
+    return '';
+  }
+
+  const parts = selections.map((entry) => {
+    if (entry.subs.length > 0) {
+      const subList = entry.subs.join(', ');
+      if (entry.themeSelected) {
+        return `${entry.label} – sous-thématiques : ${subList}`;
+      }
+      return `${entry.label} (sous-thématiques : ${subList})`;
+    }
+    return entry.label;
+  });
+
+  return `Thématiques sélectionnées : ${parts.join(' ; ')}.`;
+}
+
+function updateValidateThematicsState() {
+  if (!elements.validateThematicsButton) {
+    return;
+  }
+  elements.validateThematicsButton.disabled = !hasAnyThematicSelection();
+}
 
 function normalizeText(value) {
   return value
@@ -115,6 +161,7 @@ function renderThematics() {
     elements.checkboxPanel.classList.toggle('showing-subthemes', state.showSubThemes && visible);
   }
 
+  updateValidateThematicsState();
   elements.thematicContainer.innerHTML = '';
   if (!visible) {
     return;
@@ -152,6 +199,7 @@ function renderThematics() {
       theme.checked = checkbox.checked;
       const target = state.thematics.find((item) => item.id === theme.id);
       if (target) target.checked = checkbox.checked;
+      updateValidateThematicsState();
     });
     const span = document.createElement('span');
     span.textContent = theme.label;
@@ -177,6 +225,7 @@ function renderThematics() {
         if (targetSub) {
           targetSub.checked = subCheckbox.checked;
         }
+        updateValidateThematicsState();
       });
       const label = document.createElement('span');
       label.textContent = sub.label;
@@ -203,6 +252,7 @@ function renderThematics() {
       targetTheme.subs.push(newSub);
       input.value = '';
       renderThematics();
+      updateValidateThematicsState();
     });
 
     addWrapper.appendChild(input);
@@ -611,28 +661,47 @@ async function callApi(endpoint, body) {
   return response.json();
 }
 
-async function handleSubmit(event) {
-  event.preventDefault();
+async function sendMessageFlow({
+  displayText,
+  payloadMessage,
+  endpointOverride,
+  extraDisabledElements = []
+} = {}) {
   if (!window.OPENAI_ENABLED) {
     updateStatus('OPENAI désactivé : configurez OPENAI_API_KEY et VECTOR_STORE_ID.', true);
-    return;
+    return false;
   }
 
-  const text = elements.userInput.value.trim();
-  if (!text) return;
+  const baseText = typeof displayText === 'string' ? displayText : '';
+  const text = baseText.trim();
+  if (!text) {
+    return false;
+  }
 
-  const finalCommand = text.trim().toLowerCase() === '/final';
+  const finalCommand = text.toLowerCase() === '/final';
   if (finalCommand && !state.collecteState?.completed) {
     updateStatus('Terminez d’abord les 9 questions obligatoires avant d’utiliser /final.', true);
-    return;
+    return false;
   }
 
-  const payloadMessage = finalCommand ? 'Assembler le questionnaire complet validé.' : text;
-  const endpoint = !state.sessionId ? 'start' : finalCommand ? 'final' : 'continue';
+  const messageForApi =
+    typeof payloadMessage === 'string' && payloadMessage.trim()
+      ? payloadMessage
+      : finalCommand
+        ? 'Assembler le questionnaire complet validé.'
+        : text;
+
+  const endpoint = endpointOverride
+    ? endpointOverride
+    : !state.sessionId
+      ? 'start'
+      : finalCommand
+        ? 'final'
+        : 'continue';
 
   const requestBody = {
     promptVersion: state.promptVersion,
-    userMessage: payloadMessage,
+    userMessage: messageForApi,
     memoryDelta: buildMemoryDelta(),
     phaseHint: state.phase
   };
@@ -642,8 +711,12 @@ async function handleSubmit(event) {
   }
 
   pushMessage('user', text);
-  elements.userInput.value = '';
-  elements.sendButton.disabled = true;
+
+  const toDisable = [elements.sendButton, ...extraDisabledElements].filter(Boolean);
+  toDisable.forEach((element) => {
+    element.disabled = true;
+  });
+
   updateStatus('Génération en cours…');
 
   try {
@@ -677,8 +750,23 @@ async function handleSubmit(event) {
     updateStatus(progress ? `${status} · ${progress}` : status);
   } catch (error) {
     updateStatus(error.message, true);
+    return false;
   } finally {
-    elements.sendButton.disabled = false;
+    toDisable.forEach((element) => {
+      element.disabled = false;
+    });
+    updateValidateThematicsState();
+  }
+
+  return true;
+}
+
+async function handleSubmit(event) {
+  event.preventDefault();
+  const userText = elements.userInput.value;
+  const sent = await sendMessageFlow({ displayText: userText });
+  if (sent) {
+    elements.userInput.value = '';
   }
 }
 
@@ -727,9 +815,28 @@ function handleAddThematic() {
   renderThematics();
 }
 
+async function handleValidateThematics() {
+  if (!hasAnyThematicSelection()) {
+    return;
+  }
+
+  const message = formatSelectedThematicsMessage();
+  if (!message) {
+    return;
+  }
+
+  await sendMessageFlow({
+    displayText: message,
+    extraDisabledElements: [elements.validateThematicsButton]
+  });
+}
+
 elements.chatForm.addEventListener('submit', handleSubmit);
 elements.resetButton.addEventListener('click', resetState);
 elements.addThematicButton.addEventListener('click', handleAddThematic);
+if (elements.validateThematicsButton) {
+  elements.validateThematicsButton.addEventListener('click', handleValidateThematics);
+}
 elements.userInput.addEventListener('keydown', (event) => {
   if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
     event.preventDefault();
@@ -737,4 +844,5 @@ elements.userInput.addEventListener('keydown', (event) => {
   }
 });
 
+updateValidateThematicsState();
 resetState();
