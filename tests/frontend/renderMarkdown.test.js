@@ -273,4 +273,10 @@ assert.equal(typeof renderMarkdown, 'function', 'renderMarkdown should be a func
 const html = renderMarkdown('Q5 — Mode');
 assert.ok(/<p[^>]*class=\"[^\"]*question-heading[^\"]*\">Q5 — Mode<\/p>/.test(html), 'Expected question-heading class on paragraph');
 
-console.log('renderMarkdown applies question-heading class when prefixing numbers with Q.');
+const determinerHtml = renderMarkdown("1 — L'entreprise");
+assert.ok(/<p[^>]*class=\"[^\"]*question-heading[^\"]*\">1 — L'entreprise<\/p>/.test(determinerHtml), 'Expected question-heading class with determiner');
+
+const questionLabelHtml = renderMarkdown('Q1 — Confirmez-vous la réception…');
+assert.ok(/<p[^>]*class=\"[^\"]*question-heading[^\"]*\">Q1 — Confirmez-vous la réception…<\/p>/.test(questionLabelHtml), 'Expected question-heading class with full question text');
+
+console.log('renderMarkdown applies question-heading class for numbered headings, determiners, and full question labels.');

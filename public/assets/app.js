@@ -198,6 +198,30 @@ function renderMarkdown(markdown) {
     'Introduction',
     'Sous-thématiques'
   ].map((label) => normalizeText(label));
+  const questionHeadingDeterminerPatterns = [
+    /^l['’]\s*/,
+    /^les\s+/, 
+    /^la\s+/, 
+    /^le\s+/, 
+    /^une\s+/, 
+    /^un\s+/, 
+    /^des\s+/, 
+    /^du\s+/, 
+    /^de\s+la\s+/, 
+    /^de\s+l['’]\s*/, 
+    /^d['’]\s*/
+  ];
+  const stripQuestionHeadingDeterminer = (value) => {
+    let result = value;
+    for (const pattern of questionHeadingDeterminerPatterns) {
+      if (pattern.test(result)) {
+        result = result.replace(pattern, '');
+        break;
+      }
+    }
+    return result.trimStart();
+  };
+  const looksLikeQuestionText = (value) => /(?:\?|…|\.\.\.)\s*$/.test(value.trim());
   const questionHeadingPattern = /^(?:(?:Q\.?|Question)\s*)?(\d+)\s*[-–—]\s*(.+)$/i;
   wrapper.querySelectorAll('*').forEach((node) => {
     if (!node.textContent) {
@@ -227,7 +251,11 @@ function renderMarkdown(markdown) {
     if (headingMatch) {
       const [, , headingLabel] = headingMatch;
       const normalizedHeadingLabel = normalizeText(headingLabel.replace(/[:\s]+$/, ''));
-      if (questionHeadingLabels.some((label) => normalizedHeadingLabel.startsWith(label))) {
+      const normalizedHeadingWithoutDeterminer = stripQuestionHeadingDeterminer(normalizedHeadingLabel);
+      const matchesKnownLabel = questionHeadingLabels.some((label) =>
+        normalizedHeadingWithoutDeterminer.startsWith(label)
+      );
+      if (matchesKnownLabel || looksLikeQuestionText(headingLabel)) {
         markClosestBlock(node, 'question-heading');
       }
     }
