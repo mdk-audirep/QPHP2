@@ -139,7 +139,12 @@ function renderMarkdown(markdown) {
   const wrapper = document.createElement('div');
   wrapper.innerHTML = sanitized;
 
-  const normalize = (value) => value.replace(/\s+/g, ' ').trim().replace(/[:\s]+$/, '');
+  const normalizeWhitespace = (value) => value.replace(/\s+/g, ' ').trim();
+  const normalizeForSource = (value) => {
+    const trimmed = normalizeWhitespace(value).replace(/[:\s]+$/, '');
+    return normalizeText(trimmed);
+  };
+  const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const markClosestBlock = (element, className) => {
     const target = element.closest('p, h1, h2, h3, h4, h5, h6') || element;
     target.classList.add(className);
@@ -150,20 +155,24 @@ function renderMarkdown(markdown) {
     if (!node.textContent) {
       return;
     }
-    const normalizedText = normalize(node.textContent);
+    const normalizedText = normalizeForSource(node.textContent);
     const matchesSourceLabel = sourceLabels.some((label) => {
-      const normalizedLabel = normalize(label);
-      return (
-        normalizedText === normalizedLabel ||
-        normalizedText.startsWith(`${normalizedLabel} `) ||
-        normalizedText.startsWith(`${normalizedLabel}:`) ||
-        normalizedText.startsWith(`${normalizedLabel} :`)
-      );
+      const normalizedLabel = normalizeForSource(label);
+      if (!normalizedLabel) {
+        return false;
+      }
+
+      if (normalizedText === normalizedLabel) {
+        return true;
+      }
+
+      const pattern = new RegExp(`^${escapeRegex(normalizedLabel)}(?:\\b|\n|\r|\s|[:;,.\\-–—])`);
+      return pattern.test(normalizedText);
     });
     if (matchesSourceLabel) {
       markClosestBlock(node, 'source-section');
     }
-    if (normalizedText === '⚠️ Attente réponse utilisateur') {
+    if (normalizedText === normalizeForSource('⚠️ Attente réponse utilisateur')) {
       markClosestBlock(node, 'awaiting-section');
     }
   });

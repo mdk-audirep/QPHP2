@@ -35,10 +35,10 @@ final class CollecteFlow
             'id' => 'cible',
             'order' => 2,
             'label' => 'Cible',
-            'prompt' => "Qui est votre public cible ? Décrivez les caractéristiques démographiques et psychographiques (âge, sexe, localisation, CSP, clients vs prospects) et précisez les quotas ou segments d'analyse souhaités.",
+            'prompt' => "Veuillez répondre à la question suivante : «Qui est votre public cible ? Décrivez les caractéristiques démographiques et psychographiques (âge, sexe, localisation, CSP, clients vs prospects) et précisez les quotas ou segments d'analyse souhaités.»",
             'instructions' => [
                 "Analyse la réponse précédente pour suggérer des quotas types (âge, genre, localisation) si cela peut aider la réflexion.",
-                "Pose ensuite la question suivante : «{{prompt}}».",
+                "Pose ensuite la question suivante : {{prompt}}",
             ],
         ],
         [
