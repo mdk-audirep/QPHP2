@@ -337,8 +337,12 @@ final class ResponseFormatter
                 continue;
             }
 
-            if (isset($current['search_results']) && is_array($current['search_results'])) {
-                foreach ($current['search_results'] as $result) {
+            foreach (['search_results', 'results'] as $searchKey) {
+                if (!isset($current[$searchKey]) || !is_array($current[$searchKey])) {
+                    continue;
+                }
+
+                foreach ($current[$searchKey] as $result) {
                     if (!is_array($result)) {
                         continue;
                     }
@@ -381,12 +385,6 @@ final class ResponseFormatter
             if (isset($current['annotations']) && is_array($current['annotations'])) {
                 foreach ($current['annotations'] as $annotation) {
                     $stack[] = $annotation;
-                }
-            }
-
-            if (isset($current['results']) && is_array($current['results'])) {
-                foreach ($current['results'] as $result) {
-                    $stack[] = $result;
                 }
             }
 
@@ -535,20 +533,42 @@ final class ResponseFormatter
      */
     private static function collectSourcePart(array &$parts, mixed $value, bool $isSnippet): void
     {
-        if (!is_string($value)) {
-            return;
+        foreach (self::extractSourceValues($value) as $candidate) {
+            $normalized = $isSnippet ? self::normalizeSnippet($candidate) : self::normalizeSourceText($candidate);
+            if ($normalized === '') {
+                continue;
+            }
+
+            if (in_array($normalized, $parts, true)) {
+                continue;
+            }
+
+            $parts[] = $normalized;
+        }
+    }
+
+    /**
+     * @return list<string>
+     */
+    private static function extractSourceValues(mixed $value): array
+    {
+        if (is_string($value)) {
+            return [$value];
         }
 
-        $normalized = $isSnippet ? self::normalizeSnippet($value) : self::normalizeSourceText($value);
-        if ($normalized === '') {
-            return;
+        if (is_array($value)) {
+            $results = [];
+
+            foreach ($value as $entry) {
+                foreach (self::extractSourceValues($entry) as $nested) {
+                    $results[] = $nested;
+                }
+            }
+
+            return $results;
         }
 
-        if (in_array($normalized, $parts, true)) {
-            return;
-        }
-
-        $parts[] = $normalized;
+        return [];
     }
 
     private static function normalizeSourceText(string $value): string
