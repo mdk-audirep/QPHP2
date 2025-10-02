@@ -151,10 +151,25 @@ function renderMarkdown(markdown) {
   };
 
   const sourceLabels = ['Sources internes utilisées', 'Sources web utilisées'];
+  const questionHeadingLabels = [
+    'Entreprise',
+    'Cible',
+    "Échantillon",
+    'Nombre de questions souhaitées',
+    'Mode',
+    'Contexte',
+    'Thématiques',
+    'Sensibilités',
+    'Introduction',
+    'Sous-thématiques'
+  ].map((label) => normalizeText(label));
+  const questionHeadingPattern = /^(\d+)\s*[-–—]\s*(.+)$/;
   wrapper.querySelectorAll('*').forEach((node) => {
     if (!node.textContent) {
       return;
     }
+    const whitespaceText = normalizeWhitespace(node.textContent);
+
     const normalizedText = normalizeForSource(node.textContent);
     const matchesSourceLabel = sourceLabels.some((label) => {
       const normalizedLabel = normalizeForSource(label);
@@ -172,6 +187,16 @@ function renderMarkdown(markdown) {
     if (matchesSourceLabel) {
       markClosestBlock(node, 'source-section');
     }
+
+    const headingMatch = whitespaceText.match(questionHeadingPattern);
+    if (headingMatch) {
+      const [, , headingLabel] = headingMatch;
+      const normalizedHeadingLabel = normalizeText(headingLabel.replace(/[:\s]+$/, ''));
+      if (questionHeadingLabels.some((label) => normalizedHeadingLabel.startsWith(label))) {
+        markClosestBlock(node, 'question-heading');
+      }
+    }
+
     if (normalizedText === normalizeForSource('⚠️ Attente réponse utilisateur')) {
       markClosestBlock(node, 'awaiting-section');
     }
