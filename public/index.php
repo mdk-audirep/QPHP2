@@ -28,11 +28,13 @@ require __DIR__ . '/../src/bootstrap.php';
             </section>
             <section class="checkbox-panel is-hidden">
                 <h2>Thématiques</h2>
+                <p class="thematic-hint">Sélectionnez les thématiques et sous-thématiques pertinentes avant de valider votre choix.</p>
                 <div id="thematicContainer"></div>
                 <div class="add-thematic">
                     <input type="text" id="newThematicInput" placeholder="Ajouter une thématique" />
                     <button id="addThematicButton" type="button">Ajouter</button>
                 </div>
+                <button id="validateThematicsButton" type="button" class="validate-thematics">Valider les thématiques</button>
             </section>
         </aside>
         <main class="main-panel">
