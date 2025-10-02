@@ -225,13 +225,34 @@ final class OpenAIClient
             $pendingQuestion = SessionStore::getPendingCollecteQuestion($session);
             if ($pendingQuestion !== null) {
                 $total = CollecteFlow::count();
-                $systemText = sprintf(
-                    "Phase collecte – question %d/%d (%s).\nPose uniquement la question suivante : «%s».\nAucune autre sortie n'est autorisée. Termine strictement par «⚠️ Attente réponse utilisateur». Reste en phase collecte et ne démarre ni plan, ni génération avant la fin des 9 questions obligatoires.",
-                    $pendingQuestion['order'],
-                    $total,
-                    $pendingQuestion['label'],
-                    $pendingQuestion['prompt']
-                );
+                $systemLines = [
+                    sprintf(
+                        'Phase collecte – question %d/%d (%s).',
+                        $pendingQuestion['order'],
+                        $total,
+                        $pendingQuestion['label']
+                    ),
+                ];
+
+                if ($pendingQuestion['id'] === 'entreprise') {
+                    $systemLines[] = "Utilise l’Outil Recherche Auto pour analyser le dernier message utilisateur et détecter une entreprise ou une enseigne.";
+                    $systemLines[] = "Si tu en identifies une, réponds au format : «J’ai détecté [Nom] dans votre demande. Recherche auto : Secteur [secteur], Positionnement [positionnement], Concurrents [concurrents]. Correct ? Sinon, précisez.»";
+                    $systemLines[] = sprintf(
+                        "Si aucune enseigne n'est détectée, utilise la question de repli suivante : «%s».",
+                        $pendingQuestion['prompt']
+                    );
+                } else {
+                    $systemLines[] = sprintf(
+                        "Pose uniquement la question suivante : «%s».",
+                        $pendingQuestion['prompt']
+                    );
+                }
+
+                $systemLines[] = "Aucune autre sortie n'est autorisée.";
+                $systemLines[] = "Termine strictement par «⚠️ Attente réponse utilisateur».";
+                $systemLines[] = "Reste en phase collecte et ne démarre ni plan, ni génération avant la fin des 9 questions obligatoires.";
+
+                $systemText = implode("\n", $systemLines);
 
                 $messages[] = [
                     'role' => 'system',
