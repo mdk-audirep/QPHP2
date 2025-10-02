@@ -4,7 +4,7 @@ namespace Questionnaire\Support;
 
 final class CollecteFlow
 {
-    private const SOURCE_TRACEABILITY_INSTRUCTION = "Indique avant de poser la question quelles sources tu viens de consulter (vector store prioritaire, web search uniquement en secours si l'information manque) et justifie ce choix en rappelant la hiérarchie de la section «Gestion des sources».";
+    private const SOURCE_TRACEABILITY_INSTRUCTION = "Ajoute uniquement en fin de réponse les lignes «Sources internes utilisées : …» et «Sources web utilisées : …». Priorise toujours le vector store ; n'utilise la recherche web qu'en secours si l'information manque. N'ajoute aucun autre paragraphe.";
 
     /**
      * @var array<int, array{
