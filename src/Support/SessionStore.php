@@ -43,7 +43,8 @@ final class SessionStore
             'phase' => 'collecte',
             'memory' => [],
             'summary' => '',
-            'recentTurns' => []
+            'recentTurns' => [],
+            'collecte' => self::defaultCollecteState(),
         ];
 
         $sessions[$id] = $session;
@@ -99,9 +100,148 @@ final class SessionStore
 
     public static function updatePhase(array &$session, ?string $phase): void
     {
-        if ($phase && in_array($phase, ['collecte', 'plan', 'sections', 'final'], true)) {
-            $session['phase'] = $phase;
+        self::ensureCollecteState($session);
+
+        if (!$phase || !in_array($phase, ['collecte', 'plan', 'sections', 'final'], true)) {
+            return;
         }
+
+        if ($phase !== 'collecte' && !self::isCollecteComplete($session)) {
+            return;
+        }
+
+        $session['phase'] = $phase;
+    }
+
+    public static function ensureCollecteState(array &$session): void
+    {
+        if (!isset($session['collecte']) || !is_array($session['collecte'])) {
+            $session['collecte'] = self::defaultCollecteState();
+        }
+
+        if (!isset($session['collecte']['answers']) || !is_array($session['collecte']['answers'])) {
+            $session['collecte']['answers'] = [];
+        }
+
+        $session['collecte']['nextIndex'] = (int) ($session['collecte']['nextIndex'] ?? 0);
+        self::normalizeCollecteIndex($session);
+    }
+
+    public static function registerCollecteAnswer(array &$session, string $answer): ?array
+    {
+        self::ensureCollecteState($session);
+
+        $index = (int) $session['collecte']['nextIndex'];
+        $question = CollecteFlow::getQuestion($index);
+
+        if ($question === null) {
+            return null;
+        }
+
+        $session['collecte']['answers'][$question['id']] = trim($answer);
+        $session['collecte']['nextIndex'] = $index + 1;
+        self::normalizeCollecteIndex($session);
+
+        return $question;
+    }
+
+    public static function getPendingCollecteQuestion(array $session): ?array
+    {
+        $state = self::exportCollecteState($session);
+        if ($state['completed']) {
+            return null;
+        }
+
+        return $state['pendingQuestion'];
+    }
+
+    public static function isCollecteComplete(array $session): bool
+    {
+        $state = self::exportCollecteState($session);
+        return $state['completed'];
+    }
+
+    /**
+     * @return array{nextIndex: int, total: int, completed: bool, pendingQuestion: ?array{id: string, order: int, label: string, prompt: string, index: int}, answers: array<string, string>}
+     */
+    public static function exportCollecteState(array $session): array
+    {
+        $answers = [];
+        if (isset($session['collecte']['answers']) && is_array($session['collecte']['answers'])) {
+            foreach ($session['collecte']['answers'] as $key => $value) {
+                if (is_string($key)) {
+                    $answers[$key] = is_scalar($value) ? (string) $value : json_encode($value, JSON_UNESCAPED_UNICODE);
+                }
+            }
+        }
+
+        $index = isset($session['collecte']['nextIndex']) ? (int) $session['collecte']['nextIndex'] : 0;
+        if ($index < 0) {
+            $index = 0;
+        }
+
+        $total = CollecteFlow::count();
+
+        while ($index < $total) {
+            $question = CollecteFlow::getQuestion($index);
+            if ($question === null) {
+                break;
+            }
+
+            if (!array_key_exists($question['id'], $answers)) {
+                return [
+                    'nextIndex' => $index,
+                    'total' => $total,
+                    'completed' => false,
+                    'pendingQuestion' => $question,
+                    'answers' => $answers,
+                ];
+            }
+
+            $index++;
+        }
+
+        return [
+            'nextIndex' => min($index, $total),
+            'total' => $total,
+            'completed' => true,
+            'pendingQuestion' => null,
+            'answers' => $answers,
+        ];
+    }
+
+    private static function defaultCollecteState(): array
+    {
+        return [
+            'nextIndex' => 0,
+            'answers' => [],
+        ];
+    }
+
+    private static function normalizeCollecteIndex(array &$session): void
+    {
+        $total = CollecteFlow::count();
+        $answers = $session['collecte']['answers'];
+        $index = (int) $session['collecte']['nextIndex'];
+
+        if ($index < 0) {
+            $index = 0;
+        }
+
+        while ($index < $total) {
+            $question = CollecteFlow::getQuestion($index);
+            if ($question === null) {
+                break;
+            }
+
+            if (!array_key_exists($question['id'], $answers)) {
+                break;
+            }
+
+            $index++;
+        }
+
+        $session['collecte']['nextIndex'] = $index;
     }
 
     public static function appendTurn(array &$session, string $role, string $content): void
