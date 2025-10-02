@@ -274,12 +274,12 @@ const combinedSource = [
   renderMarkdownSource,
   renderSourcesSectionsSource,
   renderAssistantHtmlSource,
-  'module.exports = { normalizeText, renderMarkdown, renderAssistantHtml };'
+  'module.exports = { normalizeText, normalizeSources, renderMarkdown, renderAssistantHtml };'
 ].join('\n');
 
 vm.runInNewContext(combinedSource, context);
 
-const { renderMarkdown, renderAssistantHtml } = context.module.exports;
+const { normalizeSources, renderMarkdown, renderAssistantHtml } = context.module.exports;
 assert.equal(typeof renderMarkdown, 'function', 'renderMarkdown should be a function');
 assert.equal(typeof renderAssistantHtml, 'function', 'renderAssistantHtml should be a function');
 
@@ -307,4 +307,16 @@ assert.ok(!/assistant-sources/.test(renderedSources.html), 'Should not append as
 const occurrences = (renderedSources.html.match(/Sources internes utilisées/g) || []).length;
 assert.equal(occurrences, 1, 'Should render only one internal sources heading');
 
+const normalizedSources = normalizeSources({
+  internal: ['Guide interne.md — Section 2 – Aperçu'],
+  web: ['Article externe — Résumé — https://example.net/resource']
+});
+const renderedAssistant = renderAssistantHtml('Réponse synthétique', normalizedSources);
+assert.equal(renderedAssistant.hasSourceSection, false, 'Rendered assistant content should append sources section');
+assert.ok(/Guide interne\.md — Section 2 – Aperçu/.test(renderedAssistant.html), 'Internal source label should be rendered');
+const linkMatch = renderedAssistant.html.match(/<a [^>]*href=\"https:\/\/example\.net\/resource\"[^>]*>([^<]+)<\/a>/);
+assert.ok(linkMatch, 'Expected a link for the web source');
+assert.equal(linkMatch[1], 'Article externe — Résumé', 'Link text should prefer readable label');
+
 console.log('renderMarkdown applies question-heading class for numbered headings, determiners, and full question labels.');
+console.log('renderAssistantHtml renders readable source labels extracted from search results.');

@@ -134,25 +134,114 @@ function escapeHtml(text) {
 }
 
 function normalizeSources(raw) {
-  const sanitizeList = (list) => {
+  const sanitizeUrl = (value) => {
+    if (typeof value !== 'string') {
+      return '';
+    }
+
+    let candidate = value.trim();
+    if (!candidate) {
+      return '';
+    }
+
+    candidate = candidate.replace(/[),.;]+$/u, '');
+
+    const urlPattern = /^https?:\/\/[^\s]+$/i;
+    if (!urlPattern.test(candidate)) {
+      return '';
+    }
+
+    return candidate;
+  };
+
+  const cleanupLabel = (value) => {
+    if (typeof value !== 'string') {
+      return '';
+    }
+
+    let normalized = value.replace(/\s+/gu, ' ').trim();
+    if (!normalized) {
+      return '';
+    }
+
+    normalized = normalized.replace(/[\s–—\-:;,]+$/u, '').trim();
+    return normalized;
+  };
+
+  const sanitizeList = (list, isWeb = false) => {
     if (!Array.isArray(list)) {
       return [];
     }
 
     const seen = new Set();
     const result = [];
+
     list.forEach((entry) => {
-      if (typeof entry !== 'string') {
+      let label = '';
+      let href = null;
+
+      if (typeof entry === 'string') {
+        const normalized = entry.replace(/\s+/gu, ' ').trim();
+        if (!normalized) {
+          return;
+        }
+
+        if (isWeb) {
+          const matches = normalized.match(/https?:\/\/\S+/g);
+          if (matches && matches.length > 0) {
+            const candidate = matches[matches.length - 1];
+            const sanitized = sanitizeUrl(candidate);
+            if (sanitized) {
+              href = sanitized;
+              const prefix = cleanupLabel(normalized.slice(0, normalized.lastIndexOf(candidate)));
+              label = prefix || sanitized;
+            }
+          }
+        }
+
+        if (!label) {
+          label = cleanupLabel(normalized);
+        }
+      } else if (entry && typeof entry === 'object') {
+        const possibleLabel = cleanupLabel(
+          entry.label ?? entry.name ?? entry.title ?? entry.value ?? entry.text ?? ''
+        );
+        if (possibleLabel) {
+          label = possibleLabel;
+        }
+
+        if (isWeb) {
+          const possibleUrl = entry.url ?? entry.href ?? entry.link ?? null;
+          if (typeof possibleUrl === 'string') {
+            const sanitized = sanitizeUrl(possibleUrl);
+            if (sanitized) {
+              href = sanitized;
+            }
+          }
+        }
+
+        if (!label && typeof entry.id === 'string') {
+          label = cleanupLabel(entry.id);
+        }
+
+        if (!label && isWeb && href) {
+          label = href;
+        }
+      } else {
         return;
       }
 
-      const trimmed = entry.trim();
-      if (!trimmed || seen.has(trimmed)) {
+      if (!label) {
         return;
       }
 
-      seen.add(trimmed);
-      result.push(trimmed);
+      const key = isWeb ? (href || label) : label;
+      if (seen.has(key)) {
+        return;
+      }
+
+      seen.add(key);
+      result.push({ label, href: href || null });
     });
 
     return result;
@@ -163,8 +252,8 @@ function normalizeSources(raw) {
   }
 
   return {
-    internal: sanitizeList(raw.internal),
-    web: sanitizeList(raw.web)
+    internal: sanitizeList(raw.internal, false),
+    web: sanitizeList(raw.web, true)
   };
 }
 
@@ -292,12 +381,23 @@ function renderSourcesSections(rawSources) {
     }
     const entries = items
       .map((item) => {
-        if (isWeb) {
-          const escapedUrl = escapeHtml(item);
-          return `<li><a href="${escapedUrl}" target="_blank" rel="noopener">${escapedUrl}</a></li>`;
+        if (!item || typeof item !== 'object' || typeof item.label !== 'string') {
+          return '';
         }
-        return `<li>${escapeHtml(item)}</li>`;
+
+        const escapedLabel = escapeHtml(item.label);
+        if (!escapedLabel) {
+          return '';
+        }
+
+        if (isWeb && item.href) {
+          const escapedUrl = escapeHtml(item.href);
+          return `<li><a href="${escapedUrl}" target="_blank" rel="noopener">${escapedLabel}</a></li>`;
+        }
+
+        return `<li>${escapedLabel}</li>`;
       })
+      .filter(Boolean)
       .join('');
     return `<ul>${entries}</ul>`;
   };
