@@ -101,11 +101,15 @@ Si pas détecté : "Quel est le nom de l'entreprise, son secteur d'activité, so
 
 9. **Introduction**  
 "Dois-je écrire un mail d'invitation ou une introduction pour l'enquêteur (ou les deux) ?"  
-⚠️ Attente réponse utilisateur  
+⚠️ Attente réponse utilisateur
 
 ➡️ Une fois toutes les réponses collectées :  
 - Présente un sommaire thématique simple et demande validation.  
-- Ensuite seulement, passe aux sous-thématiques (une par une avec le même mécanisme d’attente).  
+⚠️ Attente réponse utilisateur
+
+10. **Sous-thématiques**  
+"Propose des sous-thématiques pour chaque thématique choisie dans la question 7."  
+⚠️ Attente réponse utilisateur
 
 ---
 
