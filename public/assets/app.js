@@ -665,8 +665,8 @@ function pushMessage(role, content, options = {}) {
     }
   } else {
     const escaped = escapeHtml(content);
-    const withLineBreaks = escaped.replace(/\r?\n/g, '<br>');
-    html = `<p>${withLineBreaks}</p>`;
+    const normalizedNewlines = escaped.replace(/\r\n?/g, '\n');
+    html = `<p class="chat-text">${normalizedNewlines}</p>`;
   }
   const message = {
     role,
