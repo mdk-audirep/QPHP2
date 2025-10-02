@@ -227,6 +227,57 @@ function buildContext() {
   return context;
 }
 
+class TestElement {
+  constructor(tagName) {
+    this.tagName = tagName;
+    this.className = '';
+    this.children = [];
+    this._innerHTML = '';
+  }
+
+  set innerHTML(value) {
+    this._innerHTML = value;
+    this.children = [];
+  }
+
+  get innerHTML() {
+    if (this.children.length === 0) {
+      return this._innerHTML;
+    }
+    return this.children
+      .map((child) => (typeof child === 'string' ? child : child.outerHTML()))
+      .join('');
+  }
+
+  appendChild(child) {
+    this.children.push(child);
+  }
+
+  outerHTML() {
+    const classAttribute = this.className ? ` class="${this.className}"` : '';
+    return `<${this.tagName}${classAttribute}>${this.innerHTML}</${this.tagName}>`;
+  }
+}
+
+class TestChatWindow extends TestElement {
+  constructor() {
+    super('section');
+    this.scrollHeight = 0;
+    this.scrollTop = 0;
+  }
+
+  set innerHTML(value) {
+    super.innerHTML = value;
+    this.children = [];
+  }
+
+  appendChild(child) {
+    super.appendChild(child);
+    this.scrollHeight = this.children.length;
+    this.scrollTop = this.scrollHeight;
+  }
+}
+
 function extractFunction(source, name) {
   const start = source.indexOf(`function ${name}`);
   if (start === -1) {
@@ -265,6 +316,7 @@ const normalizeSourcesSource = extractFunction(scriptContent, 'normalizeSources'
 const renderMarkdownSource = extractFunction(scriptContent, 'renderMarkdown');
 const renderSourcesSectionsSource = extractFunction(scriptContent, 'renderSourcesSections');
 const renderAssistantHtmlSource = extractFunction(scriptContent, 'renderAssistantHtml');
+const renderMessagesSource = extractFunction(scriptContent, 'renderMessages');
 
 const context = buildContext();
 const combinedSource = [
@@ -317,6 +369,54 @@ assert.ok(/Guide interne\.md — Section 2 – Aperçu/.test(renderedAssistant.h
 const linkMatch = renderedAssistant.html.match(/<a [^>]*href=\"https:\/\/example\.net\/resource\"[^>]*>([^<]+)<\/a>/);
 assert.ok(linkMatch, 'Expected a link for the web source');
 assert.equal(linkMatch[1], 'Article externe — Résumé', 'Link text should prefer readable label');
+
+const renderContext = {
+  console,
+  document: {
+    createElement: (tagName) => new TestElement(tagName)
+  },
+  state: { messages: [] },
+  elements: { chatWindow: new TestChatWindow() }
+};
+renderContext.document.getElementById = () => renderContext.elements.chatWindow;
+renderContext.window = renderContext;
+
+vm.runInNewContext([escapeHtmlSource, renderMessagesSource].join('\n'), renderContext);
+
+renderContext.state.messages = [
+  { role: 'assistant', html: '<p>Réponse</p>', questionTitle: 'Q1 — Introduction' }
+];
+renderContext.renderMessages();
+let bubble = renderContext.elements.chatWindow.children[0];
+assert.ok(
+  bubble.innerHTML.startsWith('<p class="question-heading">Q1 — Introduction</p>'),
+  'Expected injected question heading when message lacks one'
+);
+
+renderContext.state.messages = [
+  {
+    role: 'assistant',
+    html: '<p class="question-heading">Déjà présent</p><p>Contenu</p>',
+    questionTitle: 'Q1 — Introduction'
+  }
+];
+renderContext.elements.chatWindow = new TestChatWindow();
+renderContext.renderMessages();
+bubble = renderContext.elements.chatWindow.children[0];
+const headingMatches = bubble.innerHTML.match(/question-heading/g) || [];
+assert.equal(headingMatches.length, 1, 'Should not duplicate existing question heading in assistant HTML');
+
+renderContext.state.messages = [
+  { role: 'assistant', html: '<p>Réponse</p>', questionTitle: '<script>alert(1)</script>' }
+];
+renderContext.elements.chatWindow = new TestChatWindow();
+renderContext.renderMessages();
+bubble = renderContext.elements.chatWindow.children[0];
+assert.ok(!bubble.innerHTML.includes('<script>'), 'Injected heading should escape HTML from question title');
+assert.ok(
+  bubble.innerHTML.includes('&lt;script&gt;alert(1)&lt;/script&gt;'),
+  'Escaped title should appear in heading markup'
+);
 
 console.log('renderMarkdown applies question-heading class for numbered headings, determiners, and full question labels.');
 console.log('renderAssistantHtml renders readable source labels extracted from search results.');
