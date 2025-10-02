@@ -76,6 +76,20 @@ foreach ($questions as $question) {
         ));
     }
 
+    if (!str_contains($systemMessage, 'Sources internes utilisées')) {
+        throw new RuntimeException(sprintf(
+            "La mention 'Sources internes utilisées' est absente pour la question %s.",
+            $question['id']
+        ));
+    }
+
+    if (!str_contains($systemMessage, 'Sources web utilisées')) {
+        throw new RuntimeException(sprintf(
+            "La mention 'Sources web utilisées' est absente pour la question %s.",
+            $question['id']
+        ));
+    }
+
     foreach ($expectedInstructions as $instruction) {
         $resolvedInstruction = str_replace('{{prompt}}', $question['prompt'], $instruction);
         if (!str_contains($systemMessage, $resolvedInstruction)) {
