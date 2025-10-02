@@ -151,7 +151,16 @@ function renderMarkdown(markdown) {
       return;
     }
     const normalizedText = normalize(node.textContent);
-    if (sourceLabels.includes(normalizedText)) {
+    const matchesSourceLabel = sourceLabels.some((label) => {
+      const normalizedLabel = normalize(label);
+      return (
+        normalizedText === normalizedLabel ||
+        normalizedText.startsWith(`${normalizedLabel} `) ||
+        normalizedText.startsWith(`${normalizedLabel}:`) ||
+        normalizedText.startsWith(`${normalizedLabel} :`)
+      );
+    });
+    if (matchesSourceLabel) {
       markClosestBlock(node, 'source-section');
     }
     if (normalizedText === '⚠️ Attente réponse utilisateur') {
