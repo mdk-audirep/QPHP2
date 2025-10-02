@@ -570,7 +570,18 @@ function renderMessages() {
   state.messages.forEach((message) => {
     const bubble = document.createElement('article');
     bubble.className = `chat-message ${message.role}`;
-    bubble.innerHTML = message.html;
+
+    let bubbleHtml = message.html;
+    const questionTitle = typeof message.questionTitle === 'string' ? message.questionTitle : '';
+    if (questionTitle) {
+      const hasHeadingClass = /class\s*=\s*['"][^'"]*\bquestion-heading\b[^'"]*['"]/i.test(bubbleHtml);
+      if (!hasHeadingClass) {
+        const escapedTitle = escapeHtml(questionTitle);
+        bubbleHtml = `<p class="question-heading">${escapedTitle}</p>${bubbleHtml}`;
+      }
+    }
+
+    bubble.innerHTML = bubbleHtml;
     elements.chatWindow.appendChild(bubble);
   });
   elements.chatWindow.scrollTop = elements.chatWindow.scrollHeight;
@@ -643,11 +654,15 @@ function pushMessage(role, content, options = {}) {
   let html;
   let hasSourceSection = false;
   let sources = null;
+  let questionTitle = null;
   if (role === 'assistant') {
     sources = normalizeSources(options.sources);
     const rendered = renderAssistantHtml(content, sources);
     html = rendered.html;
     hasSourceSection = rendered.hasSourceSection;
+    if (typeof options.questionTitle === 'string' && options.questionTitle.trim()) {
+      questionTitle = options.questionTitle.trim();
+    }
   } else {
     const escaped = escapeHtml(content);
     const withLineBreaks = escaped.replace(/\r?\n/g, '<br>');
@@ -658,7 +673,8 @@ function pushMessage(role, content, options = {}) {
     content,
     html,
     hasSourceSection,
-    sources
+    sources,
+    questionTitle
   };
   state.messages.push(message);
   renderMessages();
@@ -831,7 +847,8 @@ function createStreamingAssistantMessage() {
     content: '',
     html: '<p><em>…</em></p>',
     hasSourceSection: false,
-    sources: { internal: [], web: [] }
+    sources: { internal: [], web: [] },
+    questionTitle: null
   };
   state.messages.push(message);
   renderMessages();
@@ -1076,6 +1093,22 @@ async function sendMessageFlow({
     state.phase = envelope.phase;
     state.memory = envelope.memorySnapshot || {};
     state.collecteState = envelope.collecteState || defaultCollecteState();
+    if (state.phase === 'collecte') {
+      const pendingQuestion = state.collecteState?.pendingQuestion || null;
+      const derivedTitle = formatCollecteQuestionTitle(pendingQuestion);
+      if (derivedTitle) {
+        for (let index = state.messages.length - 1; index >= 0; index -= 1) {
+          const candidate = state.messages[index];
+          if (candidate.role === 'assistant') {
+            if (candidate.questionTitle !== derivedTitle) {
+              candidate.questionTitle = derivedTitle;
+              renderMessages();
+            }
+            break;
+          }
+        }
+      }
+    }
     syncQuestionStepFromCollecteState();
     if (Array.isArray(state.memory.collecte?.thematiques)) {
       syncThematics(state.memory.collecte.thematiques);
