@@ -139,31 +139,62 @@ function renderMarkdown(markdown) {
   const wrapper = document.createElement('div');
   wrapper.innerHTML = sanitized;
 
-  const normalize = (value) => value.replace(/\s+/g, ' ').trim().replace(/[:\s]+$/, '');
+  const normalizeWhitespace = (value) => value.replace(/\s+/g, ' ').trim();
+  const normalizeForSource = (value) => {
+    const trimmed = normalizeWhitespace(value).replace(/[:\s]+$/, '');
+    return normalizeText(trimmed);
+  };
+  const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const markClosestBlock = (element, className) => {
     const target = element.closest('p, h1, h2, h3, h4, h5, h6') || element;
     target.classList.add(className);
   };
 
   const sourceLabels = ['Sources internes utilisées', 'Sources web utilisées'];
+  const questionHeadingLabels = [
+    'Entreprise',
+    'Cible',
+    "Échantillon",
+    'Nombre de questions souhaitées',
+    'Mode',
+    'Contexte',
+    'Thématiques',
+    'Sensibilités',
+    'Introduction',
+    'Sous-thématiques'
+  ].map((label) => normalizeText(label));
+  const questionHeadingPattern = /^(\d+)\s*[-–—]\s*(.+)$/;
   wrapper.querySelectorAll('*').forEach((node) => {
     if (!node.textContent) {
       return;
     }
-    const normalizedText = normalize(node.textContent);
+    const whitespaceText = normalizeWhitespace(node.textContent);
+    const normalizedText = normalizeForSource(node.textContent);
     const matchesSourceLabel = sourceLabels.some((label) => {
-      const normalizedLabel = normalize(label);
-      return (
-        normalizedText === normalizedLabel ||
-        normalizedText.startsWith(`${normalizedLabel} `) ||
-        normalizedText.startsWith(`${normalizedLabel}:`) ||
-        normalizedText.startsWith(`${normalizedLabel} :`)
-      );
+      const normalizedLabel = normalizeForSource(label);
+      if (!normalizedLabel) {
+        return false;
+      }
+
+      if (normalizedText === normalizedLabel) {
+        return true;
+      }
+
+      const pattern = new RegExp(`^${escapeRegex(normalizedLabel)}(?:\\b|\n|\r|\s|[:;,.\\-–—])`);
+      return pattern.test(normalizedText);
     });
     if (matchesSourceLabel) {
       markClosestBlock(node, 'source-section');
     }
-    if (normalizedText === '⚠️ Attente réponse utilisateur') {
+    const headingMatch = whitespaceText.match(questionHeadingPattern);
+    if (headingMatch) {
+      const [, , headingLabel] = headingMatch;
+      const normalizedHeadingLabel = normalizeText(headingLabel.replace(/[:\s]+$/, ''));
+      if (questionHeadingLabels.some((label) => normalizedHeadingLabel.startsWith(label))) {
+        markClosestBlock(node, 'question-heading');
+      }
+    }
+    if (normalizedText === normalizeForSource('⚠️ Attente réponse utilisateur')) {
       markClosestBlock(node, 'awaiting-section');
     }
   });

@@ -222,13 +222,27 @@ body {
     gap: 1rem;
 }
 
-.chat-message {
+.chat-message { 
     max-width: 760px;
     border-radius: 1rem;
     padding: 1rem 1.25rem;
     line-height: 1.55;
     border: 1px solid rgba(56, 189, 248, 0.15);
     box-shadow: 0 14px 30px rgba(15, 23, 42, 0.2);
+}
+
+.chat-message .question-heading {
+    display: block;
+    font-weight: 700;
+    font-size: 1.15rem;
+    margin: 1.25rem 0 0.85rem;
+    padding-bottom: 0.45rem;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.35);
+    letter-spacing: 0.01em;
+}
+
+.chat-message .question-heading:first-child {
+    margin-top: 0.2rem;
 }
 
 .chat-message.user {

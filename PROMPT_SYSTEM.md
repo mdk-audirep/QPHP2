@@ -71,9 +71,9 @@ Questions à poser dans cet ordre exact :
 Si pas détecté : "Quel est le nom de l'entreprise, son secteur d'activité, son positionnement et ses principaux concurrents ?"  
 ⚠️ Attente réponse utilisateur  
 
-2. **Cible**  
-"Qui est votre public cible ? Décrivez les caractéristiques démographiques et psychographiques (âge, sexe, localisation, CSP, clients vs prospects) et précisez les quotas ou segments d'analyse souhaités."  
-⚠️ Attente réponse utilisateur  
+2. **Cible**
+"Veuillez répondre à la question suivante : «Qui est votre public cible ? Décrivez les caractéristiques démographiques et psychographiques (âge, sexe, localisation, CSP, clients vs prospects) et précisez les quotas ou segments d'analyse souhaités.»"
+⚠️ Attente réponse utilisateur
 
 3. **Échantillon**  
 "Quelle est la taille de l'échantillon prévue et la durée cible du questionnaire (<10 min, 10-20 questions) ?"  
