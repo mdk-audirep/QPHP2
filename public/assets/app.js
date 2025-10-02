@@ -594,11 +594,49 @@ function describeCollecteProgress() {
     return `${base} – terminé`;
   }
 
-  if (collecte.pendingQuestion?.label) {
-    return `${base} – prochaine : ${collecte.pendingQuestion.label}`;
+  if (collecte.pendingQuestion) {
+    const title = formatCollecteQuestionTitle(collecte.pendingQuestion);
+    if (title) {
+      return `${base} – prochaine : ${title}`;
+    }
   }
 
   return base;
+}
+
+function formatCollecteQuestionTitle(question) {
+  if (!question || typeof question !== 'object') {
+    return '';
+  }
+
+  const parts = [];
+  let orderValue = null;
+
+  if (typeof question.order === 'number' && Number.isFinite(question.order)) {
+    orderValue = Math.trunc(question.order);
+  } else if (typeof question.order === 'string') {
+    const parsed = Number.parseInt(question.order, 10);
+    if (!Number.isNaN(parsed)) {
+      orderValue = parsed;
+    }
+  } else if (typeof question.index === 'number' && Number.isFinite(question.index)) {
+    orderValue = Math.trunc(question.index) + 1;
+  }
+
+  if (orderValue !== null && Number.isFinite(orderValue)) {
+    parts.push(String(orderValue));
+  }
+
+  const label = typeof question.label === 'string' ? question.label.trim() : '';
+  const prompt = typeof question.prompt === 'string' ? question.prompt.trim() : '';
+
+  if (label) {
+    parts.push(label);
+  } else if (prompt) {
+    parts.push(prompt);
+  }
+
+  return parts.join(' - ');
 }
 
 function pushMessage(role, content, options = {}) {

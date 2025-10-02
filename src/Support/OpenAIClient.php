@@ -11,6 +11,10 @@ use Psr\Http\Message\StreamInterface;
 final class OpenAIClient
 {
     private Client $client;
+    /**
+     * @var array<string, string>
+     */
+    private array $fileNameCache = [];
 
     public function __construct()
     {
@@ -47,10 +51,8 @@ final class OpenAIClient
     // }
                 public function send(array $payload, ?callable $onDelta = null): array
                 {
-			$headers = [
-				'Authorization' => 'Bearer ' . Env::get('OPENAI_API_KEY'),
-				'Content-Type'  => 'application/json',
-			];
+                        $headers = $this->defaultHeaders();
+                        $headers['Content-Type'] = 'application/json';
 
 			try {
 				// (facultatif) log minimal côté requête, sans la clé
@@ -73,10 +75,10 @@ final class OpenAIClient
 				]);
 
                                 $decoded = $this->decodeStream($response->getBody(), $onDelta);
-				if (!is_array($decoded)) {
-					throw new \RuntimeException('Réponse OpenAI illisible');
-				}
-				return $decoded;
+                                if (!is_array($decoded)) {
+                                        throw new \RuntimeException('Réponse OpenAI illisible');
+                                }
+                                return $this->enrichWithFileMetadata($decoded);
 			}
 			catch (ClientException $e) { // 4xx
 				$body = $e->hasResponse() ? (string) $e->getResponse()->getBody() : '';
@@ -401,6 +403,140 @@ final class OpenAIClient
             'type' => $type,
             'text' => $text,
         ]];
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function defaultHeaders(): array
+    {
+        return [
+            'Authorization' => 'Bearer ' . Env::get('OPENAI_API_KEY'),
+        ];
+    }
+
+    private function enrichWithFileMetadata(array $payload): array
+    {
+        $references = ResponseFormatter::summarizeSourceReferences($payload);
+        $fileIds = $references['document_ids'] ?? [];
+
+        if (!is_array($fileIds) || $fileIds === []) {
+            return $payload;
+        }
+
+        $resolved = $this->resolveFileNames($fileIds);
+        if ($resolved === []) {
+            return $payload;
+        }
+
+        if (!isset($payload['resolved_file_names']) || !is_array($payload['resolved_file_names'])) {
+            $payload['resolved_file_names'] = [];
+        }
+
+        foreach ($resolved as $id => $name) {
+            $current = $payload['resolved_file_names'][$id] ?? null;
+            if (!is_string($current) || trim($current) === '') {
+                $payload['resolved_file_names'][$id] = $name;
+            }
+        }
+
+        return $payload;
+    }
+
+    /**
+     * @param list<string> $fileIds
+     * @return array<string, string>
+     */
+    private function resolveFileNames(array $fileIds): array
+    {
+        $result = [];
+        $missing = [];
+
+        foreach ($fileIds as $fileId) {
+            if (!is_string($fileId)) {
+                continue;
+            }
+
+            $normalized = trim($fileId);
+            if ($normalized === '') {
+                continue;
+            }
+
+            if (isset($this->fileNameCache[$normalized])) {
+                $result[$normalized] = $this->fileNameCache[$normalized];
+                continue;
+            }
+
+            $missing[] = $normalized;
+        }
+
+        foreach ($missing as $fileId) {
+            $name = $this->fetchFileName($fileId);
+            if ($name === null) {
+                continue;
+            }
+
+            $this->fileNameCache[$fileId] = $name;
+            $result[$fileId] = $name;
+        }
+
+        return $result;
+    }
+
+    private function fetchFileName(string $fileId): ?string
+    {
+        try {
+            $response = $this->client->get('files/' . rawurlencode($fileId), [
+                'headers' => $this->defaultHeaders(),
+            ]);
+        } catch (ClientException | ServerException | RequestException $exception) {
+            error_log('[OpenAI file metadata] ' . $exception->getMessage());
+            return null;
+        }
+
+        $payload = json_decode((string) $response->getBody(), true);
+        if (!is_array($payload)) {
+            return null;
+        }
+
+        $candidates = [
+            $payload['display_name'] ?? null,
+            $payload['filename'] ?? null,
+            $payload['name'] ?? null,
+        ];
+
+        foreach ($candidates as $candidate) {
+            $normalized = $this->sanitizeFileNameCandidate($candidate);
+            if ($normalized !== null) {
+                return $normalized;
+            }
+        }
+
+        if (isset($payload['metadata']) && is_array($payload['metadata'])) {
+            foreach (['display_name', 'filename', 'name'] as $key) {
+                if (!array_key_exists($key, $payload['metadata'])) {
+                    continue;
+                }
+
+                $normalized = $this->sanitizeFileNameCandidate($payload['metadata'][$key]);
+                if ($normalized !== null) {
+                    return $normalized;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private function sanitizeFileNameCandidate(mixed $value): ?string
+    {
+        if (!is_string($value)) {
+            return null;
+        }
+
+        $trimmed = trim($value);
+
+        return $trimmed === '' ? null : $trimmed;
     }
 
     /**
