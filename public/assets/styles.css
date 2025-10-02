@@ -241,6 +241,24 @@ body {
     border-color: rgba(148, 163, 184, 0.2);
 }
 
+.chat-message.assistant .source-section,
+.chat-message.assistant .awaiting-section {
+    display: block;
+    margin: 1.1rem 0;
+    padding-left: 0.9rem;
+    border-left: 3px solid rgba(56, 189, 248, 0.6);
+}
+
+.chat-message.assistant .source-section {
+    font-weight: 600;
+}
+
+.chat-message.assistant .awaiting-section {
+    border-left-color: var(--danger);
+    color: var(--danger);
+    font-weight: 600;
+}
+
 .chat-message pre {
     background: rgba(2, 6, 23, 0.85);
     padding: 1rem;

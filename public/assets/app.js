@@ -138,6 +138,26 @@ function renderMarkdown(markdown) {
   const sanitized = DOMPurify.sanitize(raw, { ADD_ATTR: ['target'] });
   const wrapper = document.createElement('div');
   wrapper.innerHTML = sanitized;
+
+  const normalize = (value) => value.replace(/\s+/g, ' ').trim().replace(/[:\s]+$/, '');
+  const markClosestBlock = (element, className) => {
+    const target = element.closest('p, h1, h2, h3, h4, h5, h6') || element;
+    target.classList.add(className);
+  };
+
+  const sourceLabels = ['Sources internes utilisées', 'Sources web utilisées'];
+  wrapper.querySelectorAll('*').forEach((node) => {
+    if (!node.textContent) {
+      return;
+    }
+    const normalizedText = normalize(node.textContent);
+    if (sourceLabels.includes(normalizedText)) {
+      markClosestBlock(node, 'source-section');
+    }
+    if (normalizedText === '⚠️ Attente réponse utilisateur') {
+      markClosestBlock(node, 'awaiting-section');
+    }
+  });
   wrapper.querySelectorAll('pre code').forEach((block) => {
     if (window.hljs) {
       window.hljs.highlightElement(block);
