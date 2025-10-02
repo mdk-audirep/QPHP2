@@ -282,7 +282,7 @@ final class OpenAIClient
         ];
 
         $payload = [
-            'model' => 'gpt-5',
+            'model' => 'gpt-5-mini',
             'reasoning' => ['effort' => 'high'],
             'stream' => true,
             'parallel_tool_calls' => true,
@@ -295,7 +295,7 @@ final class OpenAIClient
 					'type' => 'web_search'
 				]		
 				],
-			    'tool_choice' => 'auto',
+			    'tool_choice' => 'required',
             // 'tools' => [
                 // ['type' => 'file_search'],
                 // ['type' => 'web_search']
@@ -357,6 +357,7 @@ final class OpenAIClient
         ]];
     }
 }
+
 
 
 
