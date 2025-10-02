@@ -204,6 +204,15 @@ namespace {
                             ['document_id' => 'doc_A'],
                         ],
                     ],
+                    'file_search_call' => [
+                        'search_results' => [
+                            [
+                                'document_id' => 'doc_A',
+                                'file' => ['filename' => 'Guide interne.md'],
+                                'snippet' => 'Section 2 – Aperçu',
+                            ],
+                        ],
+                    ],
                 ],
                 [
                     'type' => 'web_search',
@@ -211,6 +220,15 @@ namespace {
                     'web_search' => [
                         'results' => [
                             ['url' => 'https://example.net/resource'],
+                        ],
+                    ],
+                    'web_search_call' => [
+                        'search_results' => [
+                            [
+                                'url' => 'https://example.net/resource',
+                                'title' => 'Article externe',
+                                'snippet' => 'Résumé du contenu',
+                            ],
                         ],
                     ],
                 ],
@@ -270,11 +288,13 @@ namespace {
     $internal = $payload['sources']['internal'] ?? [];
     $web = $payload['sources']['web'] ?? [];
 
-    if ($internal !== ['doc_A', 'doc_B']) {
+    $expectedInternal = ['Guide interne.md — Section 2 – Aperçu', 'doc_B'];
+    if ($internal !== $expectedInternal) {
         throw new RuntimeException('Sources internes incorrectes : ' . json_encode($internal, JSON_UNESCAPED_UNICODE));
     }
 
-    if ($web !== ['https://example.net/resource', 'https://example.org/article']) {
+    $expectedWeb = ['Article externe — Résumé du contenu — https://example.net/resource', 'https://example.org/article'];
+    if ($web !== $expectedWeb) {
         throw new RuntimeException('Sources web incorrectes : ' . json_encode($web, JSON_UNESCAPED_UNICODE));
     }
 
@@ -292,5 +312,5 @@ namespace {
         throw new RuntimeException('Les sources web formatées sont incorrectes.');
     }
 
-    echo "ResponseFormatter sources test passed.\n";
+    echo "ResponseFormatter sources test passed with search result labels.\n";
 }

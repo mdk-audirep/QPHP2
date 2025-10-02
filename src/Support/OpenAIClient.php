@@ -355,6 +355,10 @@ final class OpenAIClient
             'metadata' => [
                 'session_id' => $session['id'],
                 'prompt_version' => $session['promptVersion']
+            ],
+            'include' => [
+                'output[*].file_search_call.search_results',
+                'output[*].web_search_call.search_results',
             ]
         ];
 

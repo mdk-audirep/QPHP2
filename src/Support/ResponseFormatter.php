@@ -50,12 +50,15 @@ final class ResponseFormatter
 
         [$documents, $urls] = self::collectRawSources($payload);
 
-        foreach (array_keys($documents) as $documentId) {
-            self::pushUnique($sources['internal'], $documentId);
+        foreach ($documents as $documentId => $parts) {
+            $label = self::buildSourceLabel($parts);
+            self::pushUnique($sources['internal'], $label ?? $documentId);
         }
 
-        foreach (array_keys($urls) as $url) {
-            self::pushUnique($sources['web'], $url);
+        foreach ($urls as $url => $parts) {
+            $label = self::buildSourceLabel($parts);
+            $display = $label !== null ? self::appendUrlToLabel($label, $url) : $url;
+            self::pushUnique($sources['web'], $display);
         }
 
         return $sources;
@@ -273,7 +276,7 @@ final class ResponseFormatter
     }
 
     /**
-     * @return array{0: array<string, true>, 1: array<string, true>}
+     * @return array{0: array<string, list<string>>, 1: array<string, list<string>>}
      */
     private static function collectRawSources(array $payload): array
     {
@@ -287,12 +290,45 @@ final class ResponseFormatter
                 continue;
             }
 
-            if (isset($current['document_id']) && is_string($current['document_id']) && $current['document_id'] !== '') {
-                $documents[$current['document_id']] = true;
+            if (isset($current['search_results']) && is_array($current['search_results'])) {
+                foreach ($current['search_results'] as $result) {
+                    if (!is_array($result)) {
+                        continue;
+                    }
+
+                    $summary = self::summarizeSearchResult($result);
+
+                    if ($summary['documentId'] !== null) {
+                        $documents[$summary['documentId']] = self::mergeSourceParts(
+                            $documents[$summary['documentId']] ?? [],
+                            $summary['parts']
+                        );
+                    }
+
+                    if ($summary['url'] !== null) {
+                        $urls[$summary['url']] = self::mergeSourceParts(
+                            $urls[$summary['url']] ?? [],
+                            $summary['parts']
+                        );
+                    }
+
+                    $stack[] = $result;
+                }
             }
 
-            if (isset($current['file_id']) && is_string($current['file_id']) && $current['file_id'] !== '') {
-                $documents[$current['file_id']] = true;
+            $documentId = self::sanitizeSourceId($current['document_id'] ?? null);
+            if ($documentId !== null && !array_key_exists($documentId, $documents)) {
+                $documents[$documentId] = [];
+            }
+
+            $fileId = self::sanitizeSourceId($current['file_id'] ?? null);
+            if ($fileId !== null && !array_key_exists($fileId, $documents)) {
+                $documents[$fileId] = [];
+            }
+
+            $url = self::sanitizeUrl($current['url'] ?? null);
+            if ($url !== null && !array_key_exists($url, $urls)) {
+                $urls[$url] = [];
             }
 
             if (isset($current['annotations']) && is_array($current['annotations'])) {
@@ -304,12 +340,6 @@ final class ResponseFormatter
             if (isset($current['results']) && is_array($current['results'])) {
                 foreach ($current['results'] as $result) {
                     $stack[] = $result;
-                }
-            }
-
-            if (isset($current['url']) && is_string($current['url']) && $current['url'] !== '') {
-                if (filter_var($current['url'], FILTER_VALIDATE_URL)) {
-                    $urls[$current['url']] = true;
                 }
             }
 
@@ -325,5 +355,180 @@ final class ResponseFormatter
         }
 
         return [$documents, $urls];
+    }
+
+    /**
+     * @param list<string> $parts
+     */
+    private static function buildSourceLabel(array $parts): ?string
+    {
+        $buffer = [];
+
+        foreach ($parts as $part) {
+            if (!is_string($part)) {
+                continue;
+            }
+
+            $normalized = self::normalizeSourceText($part);
+            if ($normalized === '') {
+                continue;
+            }
+
+            if (in_array($normalized, $buffer, true)) {
+                continue;
+            }
+
+            $buffer[] = $normalized;
+        }
+
+        if ($buffer === []) {
+            return null;
+        }
+
+        return implode(' — ', $buffer);
+    }
+
+    private static function appendUrlToLabel(string $label, string $url): string
+    {
+        if ($url === '') {
+            return $label;
+        }
+
+        if (str_contains($label, $url)) {
+            return $label;
+        }
+
+        return sprintf('%s — %s', $label, $url);
+    }
+
+    /**
+     * @param list<string> $existing
+     * @param list<string> $additional
+     * @return list<string>
+     */
+    private static function mergeSourceParts(array $existing, array $additional): array
+    {
+        foreach ($additional as $value) {
+            if (!is_string($value)) {
+                continue;
+            }
+
+            $normalized = self::normalizeSourceText($value);
+            if ($normalized === '') {
+                continue;
+            }
+
+            if (in_array($normalized, $existing, true)) {
+                continue;
+            }
+
+            $existing[] = $normalized;
+        }
+
+        return $existing;
+    }
+
+    /**
+     * @return array{documentId: string|null, url: string|null, parts: list<string>}
+     */
+    private static function summarizeSearchResult(array $result): array
+    {
+        $parts = [];
+
+        if (isset($result['file']) && is_array($result['file'])) {
+            foreach (['display_name', 'filename', 'filepath', 'path'] as $key) {
+                self::collectSourcePart($parts, $result['file'][$key] ?? null, false);
+            }
+        }
+
+        foreach (['filename', 'file_name', 'name', 'label', 'title', 'heading'] as $key) {
+            self::collectSourcePart($parts, $result[$key] ?? null, false);
+        }
+
+        $snippetCandidate = $result['snippet'] ?? ($result['content'] ?? ($result['excerpt'] ?? null));
+        self::collectSourcePart($parts, $snippetCandidate, true);
+
+        return [
+            'documentId' => self::sanitizeSourceId($result['document_id'] ?? ($result['file_id'] ?? ($result['id'] ?? null))),
+            'url' => self::sanitizeUrl($result['url'] ?? ($result['link'] ?? null)),
+            'parts' => $parts,
+        ];
+    }
+
+    /**
+     * @param list<string> $parts
+     */
+    private static function collectSourcePart(array &$parts, mixed $value, bool $isSnippet): void
+    {
+        if (!is_string($value)) {
+            return;
+        }
+
+        $normalized = $isSnippet ? self::normalizeSnippet($value) : self::normalizeSourceText($value);
+        if ($normalized === '') {
+            return;
+        }
+
+        if (in_array($normalized, $parts, true)) {
+            return;
+        }
+
+        $parts[] = $normalized;
+    }
+
+    private static function normalizeSourceText(string $value): string
+    {
+        $trimmed = trim($value);
+        if ($trimmed === '') {
+            return '';
+        }
+
+        $normalized = preg_replace('/\s+/u', ' ', $trimmed);
+
+        return is_string($normalized) ? trim($normalized) : $trimmed;
+    }
+
+    private static function normalizeSnippet(string $value): string
+    {
+        $normalized = self::normalizeSourceText($value);
+        if ($normalized === '') {
+            return '';
+        }
+
+        $limit = 160;
+        if (function_exists('mb_strlen') && function_exists('mb_substr')) {
+            if (mb_strlen($normalized) > $limit) {
+                $normalized = rtrim(mb_substr($normalized, 0, $limit - 1)) . '…';
+            }
+        } elseif (strlen($normalized) > $limit) {
+            $normalized = rtrim(substr($normalized, 0, $limit - 1)) . '…';
+        }
+
+        return $normalized;
+    }
+
+    private static function sanitizeSourceId(mixed $value): ?string
+    {
+        if (!is_string($value)) {
+            return null;
+        }
+
+        $trimmed = trim($value);
+
+        return $trimmed === '' ? null : $trimmed;
+    }
+
+    private static function sanitizeUrl(mixed $value): ?string
+    {
+        if (!is_string($value)) {
+            return null;
+        }
+
+        $trimmed = trim($value);
+        if ($trimmed === '') {
+            return null;
+        }
+
+        return filter_var($trimmed, FILTER_VALIDATE_URL) ? $trimmed : null;
     }
 }
