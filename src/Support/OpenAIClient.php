@@ -109,8 +109,18 @@ final class OpenAIClient
         $eventLines = [];
         $done = false;
         $raw = '';
+        $aggregatedSources = [
+            'internal' => [],
+            'web' => [],
+        ];
 
-        $processEvent = function (array $lines) use (&$output, &$fallback, $onDelta, &$done): void {
+        $appendSources = function (array $payload) use (&$aggregatedSources): void {
+            $sources = ResponseFormatter::extractSources($payload);
+            $aggregatedSources['internal'] = self::mergeSourceList($aggregatedSources['internal'], $sources['internal']);
+            $aggregatedSources['web'] = self::mergeSourceList($aggregatedSources['web'], $sources['web']);
+        };
+
+        $processEvent = function (array $lines) use (&$output, &$fallback, $onDelta, &$done, $appendSources): void {
             if ($done) {
                 return;
             }
@@ -143,14 +153,17 @@ final class OpenAIClient
             }
 
             $fallback = $decoded;
+            $appendSources($decoded);
 
             if (isset($decoded['output']) && is_array($decoded['output'])) {
                 $output = $decoded['output'];
             }
 
             if (isset($decoded['delta']['output']) && is_array($decoded['delta']['output'])) {
-                foreach ($decoded['delta']['output'] as $chunk) {
-                    $output[] = $chunk;
+                if (!isset($decoded['output'])) {
+                    foreach ($decoded['delta']['output'] as $chunk) {
+                        $output[] = $chunk;
+                    }
                 }
 
                 if ($onDelta !== null) {
@@ -201,17 +214,46 @@ final class OpenAIClient
             }
         }
 
+        $hasSources = $aggregatedSources['internal'] !== [] || $aggregatedSources['web'] !== [];
+
         if (!empty($output)) {
-            return ['output' => $output];
+            $result = ['output' => $output];
+            if ($hasSources) {
+                $result['sources'] = $aggregatedSources;
+            }
+
+            return $result;
         }
 
         if ($fallback) {
+            if ($hasSources) {
+                $existingInternal = self::normalizeSourceList($fallback['sources']['internal'] ?? null);
+                $existingWeb = self::normalizeSourceList($fallback['sources']['web'] ?? null);
+                $fallback['sources'] = [
+                    'internal' => self::mergeSourceList($existingInternal, $aggregatedSources['internal']),
+                    'web' => self::mergeSourceList($existingWeb, $aggregatedSources['web']),
+                ];
+            }
+
             return $fallback;
         }
 
         $decoded = json_decode($raw, true);
         if (is_array($decoded)) {
+            if ($hasSources) {
+                $existingInternal = self::normalizeSourceList($decoded['sources']['internal'] ?? null);
+                $existingWeb = self::normalizeSourceList($decoded['sources']['web'] ?? null);
+                $decoded['sources'] = [
+                    'internal' => self::mergeSourceList($existingInternal, $aggregatedSources['internal']),
+                    'web' => self::mergeSourceList($existingWeb, $aggregatedSources['web']),
+                ];
+            }
+
             return $decoded;
+        }
+
+        if ($hasSources) {
+            return ['sources' => $aggregatedSources];
         }
 
         return [];
@@ -355,6 +397,66 @@ final class OpenAIClient
             'type' => $type,
             'text' => $text,
         ]];
+    }
+
+    /**
+     * @param list<string>|mixed $value
+     * @return list<string>
+     */
+    private static function normalizeSourceList(mixed $value): array
+    {
+        if (!is_array($value)) {
+            return [];
+        }
+
+        $normalized = [];
+        foreach ($value as $entry) {
+            if (!is_string($entry)) {
+                continue;
+            }
+
+            $trimmed = trim($entry);
+            if ($trimmed === '') {
+                continue;
+            }
+
+            $normalized[] = $trimmed;
+        }
+
+        return self::mergeSourceList([], $normalized);
+    }
+
+    /**
+     * @param list<string> $existing
+     * @param list<string> $additional
+     * @return list<string>
+     */
+    private static function mergeSourceList(array $existing, array $additional): array
+    {
+        $seen = [];
+        $result = [];
+
+        foreach ([$existing, $additional] as $list) {
+            foreach ($list as $value) {
+                if (!is_string($value)) {
+                    continue;
+                }
+
+                $trimmed = trim($value);
+                if ($trimmed === '') {
+                    continue;
+                }
+
+                if (isset($seen[$trimmed])) {
+                    continue;
+                }
+
+                $seen[$trimmed] = true;
+                $result[] = $trimmed;
+            }
+        }
+
+        return $result;
     }
 }
 

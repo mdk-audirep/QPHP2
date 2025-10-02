@@ -133,6 +133,41 @@ function escapeHtml(text) {
     .replace(/"/g, '&quot;');
 }
 
+function normalizeSources(raw) {
+  const sanitizeList = (list) => {
+    if (!Array.isArray(list)) {
+      return [];
+    }
+
+    const seen = new Set();
+    const result = [];
+    list.forEach((entry) => {
+      if (typeof entry !== 'string') {
+        return;
+      }
+
+      const trimmed = entry.trim();
+      if (!trimmed || seen.has(trimmed)) {
+        return;
+      }
+
+      seen.add(trimmed);
+      result.push(trimmed);
+    });
+
+    return result;
+  };
+
+  if (!raw || typeof raw !== 'object') {
+    return { internal: [], web: [] };
+  }
+
+  return {
+    internal: sanitizeList(raw.internal),
+    web: sanitizeList(raw.web)
+  };
+}
+
 function renderMarkdown(markdown) {
   const raw = marked.parse(markdown, { mangle: false, headerIds: false });
   const sanitized = DOMPurify.sanitize(raw, { ADD_ATTR: ['target'] });
@@ -207,6 +242,46 @@ function renderMarkdown(markdown) {
     }
   });
   return wrapper.innerHTML;
+}
+
+function renderSourcesSections(rawSources) {
+  const sources = normalizeSources(rawSources);
+  const { internal, web } = sources;
+  if (internal.length === 0 && web.length === 0) {
+    return '';
+  }
+
+  const renderList = (items, isWeb = false) => {
+    if (items.length === 0) {
+      return '';
+    }
+    const entries = items
+      .map((item) => {
+        if (isWeb) {
+          const escapedUrl = escapeHtml(item);
+          return `<li><a href="${escapedUrl}" target="_blank" rel="noopener">${escapedUrl}</a></li>`;
+        }
+        return `<li>${escapeHtml(item)}</li>`;
+      })
+      .join('');
+    return `<ul>${entries}</ul>`;
+  };
+
+  let html = '<div class="assistant-sources">';
+  if (internal.length > 0) {
+    html += `<section class="assistant-sources__section"><h4>Sources internes utilisées</h4>${renderList(internal)}</section>`;
+  }
+  if (web.length > 0) {
+    html += `<section class="assistant-sources__section"><h4>Sources web utilisées</h4>${renderList(web, true)}</section>`;
+  }
+  html += '</div>';
+  return html;
+}
+
+function renderAssistantHtml(content, sources) {
+  const markdownHtml = renderMarkdown(content);
+  const sourcesHtml = renderSourcesSections(sources);
+  return sourcesHtml ? `${markdownHtml}${sourcesHtml}` : markdownHtml;
 }
 
 function cloneThematics() {
@@ -387,15 +462,21 @@ function describeCollecteProgress() {
   return base;
 }
 
-function pushMessage(role, content) {
+function pushMessage(role, content, options = {}) {
   const html = role === 'assistant'
-    ? renderMarkdown(content)
+    ? renderAssistantHtml(content, normalizeSources(options.sources))
     : (() => {
       const escaped = escapeHtml(content);
       const withLineBreaks = escaped.replace(/\r?\n/g, '<br>');
       return `<p>${withLineBreaks}</p>`;
     })();
-  state.messages.push({ role, content, html });
+  const message = {
+    role,
+    content,
+    html,
+    sources: role === 'assistant' ? normalizeSources(options.sources) : null
+  };
+  state.messages.push(message);
   renderMessages();
 
   if (role === 'assistant') {
@@ -564,7 +645,8 @@ function createStreamingAssistantMessage() {
   const message = {
     role: 'assistant',
     content: '',
-    html: '<p><em>…</em></p>'
+    html: '<p><em>…</em></p>',
+    sources: { internal: [], web: [] }
   };
   state.messages.push(message);
   renderMessages();
@@ -577,14 +659,15 @@ function updateStreamingAssistantMessage(message, delta) {
   }
 
   message.content += delta;
-  message.html = renderMarkdown(message.content);
+  message.html = renderAssistantHtml(message.content, message.sources);
   renderMessages();
 }
 
-function finalizeStreamingAssistantMessage(message, content) {
+function finalizeStreamingAssistantMessage(message, content, rawSources) {
   const finalContent = content || message.content;
   message.content = finalContent;
-  message.html = renderMarkdown(finalContent);
+  message.sources = normalizeSources(rawSources);
+  message.html = renderAssistantHtml(finalContent, message.sources);
   renderMessages();
   handleAssistantState(finalContent);
 }
@@ -702,7 +785,11 @@ async function streamApi(endpoint, body) {
     throw new Error('Réponse incomplète reçue depuis le serveur.');
   }
 
-  finalizeStreamingAssistantMessage(message, finalEnvelope.assistantMarkdown || message.content);
+  finalizeStreamingAssistantMessage(
+    message,
+    finalEnvelope.assistantMarkdown || message.content,
+    finalEnvelope.sources
+  );
 
   return {
     envelope: finalEnvelope,
@@ -787,12 +874,12 @@ async function sendMessageFlow({
 
     if (!state.sessionId) {
       envelope = await callApi(endpoint, requestBody);
-      pushMessage('assistant', envelope.assistantMarkdown);
+      pushMessage('assistant', envelope.assistantMarkdown, { sources: envelope.sources });
     } else {
       const result = await streamApi(endpoint, requestBody);
       envelope = result.envelope;
       if (!result.streamed) {
-        pushMessage('assistant', envelope.assistantMarkdown);
+        pushMessage('assistant', envelope.assistantMarkdown, { sources: envelope.sources });
       }
     }
 
