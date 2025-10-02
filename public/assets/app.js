@@ -277,7 +277,11 @@ function describeCollecteProgress() {
 function pushMessage(role, content) {
   const html = role === 'assistant'
     ? renderMarkdown(content)
-    : `<p>${escapeHtml(content)}</p>`;
+    : (() => {
+      const escaped = escapeHtml(content);
+      const withLineBreaks = escaped.replace(/\r?\n/g, '<br>');
+      return `<p>${withLineBreaks}</p>`;
+    })();
   state.messages.push({ role, content, html });
   renderMessages();
 
