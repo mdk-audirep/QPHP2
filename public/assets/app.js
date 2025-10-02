@@ -183,6 +183,7 @@ function renderMarkdown(markdown) {
   const markClosestBlock = (element, className) => {
     const target = element.closest('p, h1, h2, h3, h4, h5, h6') || element;
     target.classList.add(className);
+    return target;
   };
 
   const sourceLabels = ['Sources internes utilisées', 'Sources web utilisées'];
@@ -223,9 +224,14 @@ function renderMarkdown(markdown) {
   };
   const looksLikeQuestionText = (value) => /(?:\?|…|\.\.\.)\s*$/.test(value.trim());
   const questionHeadingPattern = /^(?:(?:Q\.?|Question)\s*)?(\d+)\s*[-–—]\s*(.+)$/i;
+  let hasSourceSection = false;
   wrapper.querySelectorAll('*').forEach((node) => {
     if (!node.textContent) {
       return;
+    }
+
+    if (node.classList && typeof node.classList.contains === 'function' && node.classList.contains('source-section')) {
+      hasSourceSection = true;
     }
     const whitespaceText = normalizeWhitespace(node.textContent);
 
@@ -245,6 +251,7 @@ function renderMarkdown(markdown) {
     });
     if (matchesSourceLabel) {
       markClosestBlock(node, 'source-section');
+      hasSourceSection = true;
     }
 
     const headingMatch = whitespaceText.match(questionHeadingPattern);
@@ -269,7 +276,7 @@ function renderMarkdown(markdown) {
       window.hljs.highlightElement(block);
     }
   });
-  return wrapper.innerHTML;
+  return { html: wrapper.innerHTML, hasSourceSection };
 }
 
 function renderSourcesSections(rawSources) {
@@ -307,9 +314,13 @@ function renderSourcesSections(rawSources) {
 }
 
 function renderAssistantHtml(content, sources) {
-  const markdownHtml = renderMarkdown(content);
+  const { html: markdownHtml, hasSourceSection } = renderMarkdown(content);
+  if (hasSourceSection) {
+    return { html: markdownHtml, hasSourceSection };
+  }
   const sourcesHtml = renderSourcesSections(sources);
-  return sourcesHtml ? `${markdownHtml}${sourcesHtml}` : markdownHtml;
+  const html = sourcesHtml ? `${markdownHtml}${sourcesHtml}` : markdownHtml;
+  return { html, hasSourceSection: false };
 }
 
 function cloneThematics() {
@@ -491,18 +502,25 @@ function describeCollecteProgress() {
 }
 
 function pushMessage(role, content, options = {}) {
-  const html = role === 'assistant'
-    ? renderAssistantHtml(content, normalizeSources(options.sources))
-    : (() => {
-      const escaped = escapeHtml(content);
-      const withLineBreaks = escaped.replace(/\r?\n/g, '<br>');
-      return `<p>${withLineBreaks}</p>`;
-    })();
+  let html;
+  let hasSourceSection = false;
+  let sources = null;
+  if (role === 'assistant') {
+    sources = normalizeSources(options.sources);
+    const rendered = renderAssistantHtml(content, sources);
+    html = rendered.html;
+    hasSourceSection = rendered.hasSourceSection;
+  } else {
+    const escaped = escapeHtml(content);
+    const withLineBreaks = escaped.replace(/\r?\n/g, '<br>');
+    html = `<p>${withLineBreaks}</p>`;
+  }
   const message = {
     role,
     content,
     html,
-    sources: role === 'assistant' ? normalizeSources(options.sources) : null
+    hasSourceSection,
+    sources
   };
   state.messages.push(message);
   renderMessages();
@@ -674,6 +692,7 @@ function createStreamingAssistantMessage() {
     role: 'assistant',
     content: '',
     html: '<p><em>…</em></p>',
+    hasSourceSection: false,
     sources: { internal: [], web: [] }
   };
   state.messages.push(message);
@@ -687,7 +706,9 @@ function updateStreamingAssistantMessage(message, delta) {
   }
 
   message.content += delta;
-  message.html = renderAssistantHtml(message.content, message.sources);
+  const rendered = renderAssistantHtml(message.content, message.sources);
+  message.html = rendered.html;
+  message.hasSourceSection = rendered.hasSourceSection;
   renderMessages();
 }
 
@@ -695,7 +716,9 @@ function finalizeStreamingAssistantMessage(message, content, rawSources) {
   const finalContent = content || message.content;
   message.content = finalContent;
   message.sources = normalizeSources(rawSources);
-  message.html = renderAssistantHtml(finalContent, message.sources);
+  const rendered = renderAssistantHtml(finalContent, message.sources);
+  message.html = rendered.html;
+  message.hasSourceSection = rendered.hasSourceSection;
   renderMessages();
   handleAssistantState(finalContent);
 }

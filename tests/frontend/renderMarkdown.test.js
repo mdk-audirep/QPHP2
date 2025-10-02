@@ -260,23 +260,51 @@ function extractFunction(source, name) {
 const scriptPath = path.resolve(__dirname, '../../public/assets/app.js');
 const scriptContent = fs.readFileSync(scriptPath, 'utf8');
 const normalizeTextSource = extractFunction(scriptContent, 'normalizeText');
+const escapeHtmlSource = extractFunction(scriptContent, 'escapeHtml');
+const normalizeSourcesSource = extractFunction(scriptContent, 'normalizeSources');
 const renderMarkdownSource = extractFunction(scriptContent, 'renderMarkdown');
+const renderSourcesSectionsSource = extractFunction(scriptContent, 'renderSourcesSections');
+const renderAssistantHtmlSource = extractFunction(scriptContent, 'renderAssistantHtml');
 
 const context = buildContext();
-const combinedSource = `${normalizeTextSource}\n${renderMarkdownSource}\nmodule.exports = { normalizeText, renderMarkdown };`;
+const combinedSource = [
+  normalizeTextSource,
+  escapeHtmlSource,
+  normalizeSourcesSource,
+  renderMarkdownSource,
+  renderSourcesSectionsSource,
+  renderAssistantHtmlSource,
+  'module.exports = { normalizeText, renderMarkdown, renderAssistantHtml };'
+].join('\n');
 
 vm.runInNewContext(combinedSource, context);
 
-const { renderMarkdown } = context.module.exports;
+const { renderMarkdown, renderAssistantHtml } = context.module.exports;
 assert.equal(typeof renderMarkdown, 'function', 'renderMarkdown should be a function');
+assert.equal(typeof renderAssistantHtml, 'function', 'renderAssistantHtml should be a function');
 
-const html = renderMarkdown('Q5 — Mode');
+const { html } = renderMarkdown('Q5 — Mode');
 assert.ok(/<p[^>]*class=\"[^\"]*question-heading[^\"]*\">Q5 — Mode<\/p>/.test(html), 'Expected question-heading class on paragraph');
 
-const determinerHtml = renderMarkdown("1 — L'entreprise");
+const determinerHtml = renderMarkdown("1 — L'entreprise").html;
 assert.ok(/<p[^>]*class=\"[^\"]*question-heading[^\"]*\">1 — L'entreprise<\/p>/.test(determinerHtml), 'Expected question-heading class with determiner');
 
-const questionLabelHtml = renderMarkdown('Q1 — Confirmez-vous la réception…');
+const questionLabelHtml = renderMarkdown('Q1 — Confirmez-vous la réception…').html;
 assert.ok(/<p[^>]*class=\"[^\"]*question-heading[^\"]*\">Q1 — Confirmez-vous la réception…<\/p>/.test(questionLabelHtml), 'Expected question-heading class with full question text');
+
+const sourcesContent = [
+  'Sources internes utilisées',
+  '',
+  '- Mémo existant',
+  '',
+  'Sources web utilisées',
+  '',
+  '- https://exemple.test'
+].join('\n');
+const renderedSources = renderAssistantHtml(sourcesContent, { internal: ['Document interne'], web: ['https://autre.test'] });
+assert.equal(renderedSources.hasSourceSection, true, 'Expected detection of existing source section');
+assert.ok(!/assistant-sources/.test(renderedSources.html), 'Should not append assistant sources when already present');
+const occurrences = (renderedSources.html.match(/Sources internes utilisées/g) || []).length;
+assert.equal(occurrences, 1, 'Should render only one internal sources heading');
 
 console.log('renderMarkdown applies question-heading class for numbered headings, determiners, and full question labels.');
