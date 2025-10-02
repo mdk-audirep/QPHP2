@@ -234,18 +234,8 @@ final class OpenAIClient
                     ),
                 ];
 
-                if ($pendingQuestion['id'] === 'entreprise') {
-                    $systemLines[] = "Utilise l’Outil Recherche Auto pour analyser le dernier message utilisateur et détecter une entreprise ou une enseigne.";
-                    $systemLines[] = "Si tu en identifies une, réponds au format : «J’ai détecté [Nom] dans votre demande. Recherche auto : Secteur [secteur], Positionnement [positionnement], Concurrents [concurrents]. Correct ? Sinon, précisez.»";
-                    $systemLines[] = sprintf(
-                        "Si aucune enseigne n'est détectée, utilise la question de repli suivante : «%s».",
-                        $pendingQuestion['prompt']
-                    );
-                } else {
-                    $systemLines[] = sprintf(
-                        "Pose uniquement la question suivante : «%s».",
-                        $pendingQuestion['prompt']
-                    );
+                foreach ($this->buildQuestionInstructions($pendingQuestion) as $instruction) {
+                    $systemLines[] = $instruction;
                 }
 
                 $systemLines[] = "Aucune autre sortie n'est autorisée.";
@@ -331,6 +321,25 @@ final class OpenAIClient
             $payload['max_output_tokens'] = 20000;
         }
         return $payload;
+    }
+
+    /**
+     * @param array{id: string, prompt: string} $pendingQuestion
+     * @return list<string>
+     */
+    private function buildQuestionInstructions(array $pendingQuestion): array
+    {
+        $instructions = CollecteFlow::instructions($pendingQuestion['id']);
+        if ($instructions === []) {
+            return [sprintf('Pose la question suivante : «%s».', $pendingQuestion['prompt'])];
+        }
+
+        $resolved = [];
+        foreach ($instructions as $line) {
+            $resolved[] = str_replace('{{prompt}}', $pendingQuestion['prompt'], $line);
+        }
+
+        return $resolved;
     }
     /**
      * @return array<int, array{type: string, text: string}>
