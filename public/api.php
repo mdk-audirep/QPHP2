@@ -133,7 +133,8 @@ function responseStart(array $data): void
         // echo json_encode($payload);
     $result = $client->send($payload);
 
-    $assistantMarkdown = ResponseFormatter::extractContent($result);
+    $assistantResponse = ResponseFormatter::formatAssistantResponse($result);
+    $assistantMarkdown = $assistantResponse['markdown'];
     $phase = ResponseFormatter::detectPhase($assistantMarkdown, $session['phase']);
     SessionStore::updatePhase($session, $phase);
 
@@ -148,6 +149,7 @@ function responseStart(array $data): void
         'promptVersion' => Prompt::VERSION,
         'phase' => $phase,
         'assistantMarkdown' => $assistantMarkdown,
+        'sources' => $assistantResponse['sources'],
         'memorySnapshot' => $session['memory'],
         'finalMarkdownPresent' => ResponseFormatter::hasFinalMarkdown($assistantMarkdown),
         'nextAction' => 'ask_user',
@@ -228,7 +230,8 @@ function responseContinue(array $data, bool $finalOverride): void
         return;
     }
 
-    $assistantMarkdown = ResponseFormatter::extractContent($result);
+    $assistantResponse = ResponseFormatter::formatAssistantResponse($result);
+    $assistantMarkdown = $assistantResponse['markdown'];
     $phase = $finalOverride ? 'final' : ResponseFormatter::detectPhase($assistantMarkdown, $session['phase']);
 
     SessionStore::appendTurn($session, 'user', (string) $data['userMessage']);
@@ -242,6 +245,7 @@ function responseContinue(array $data, bool $finalOverride): void
         'promptVersion' => $session['promptVersion'],
         'phase' => $phase,
         'assistantMarkdown' => $assistantMarkdown,
+        'sources' => $assistantResponse['sources'],
         'memorySnapshot' => $session['memory'],
         'finalMarkdownPresent' => ResponseFormatter::hasFinalMarkdown($assistantMarkdown),
         'nextAction' => $finalOverride ? 'persist_and_render' : 'ask_user',

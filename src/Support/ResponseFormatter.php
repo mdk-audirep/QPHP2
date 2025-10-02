@@ -6,17 +6,59 @@ final class ResponseFormatter
 {
     public static function extractContent(array $openAiResponse): string
     {
-        $chunks = self::gatherOutputChunks($openAiResponse);
-        if ($chunks === []) {
-            return '';
+        return self::formatAssistantResponse($openAiResponse)['markdown'];
+    }
+
+    /**
+     * @return array{markdown: string, sources: array{internal: list<string>, web: list<string>}}
+     */
+    public static function formatAssistantResponse(array $response): array
+    {
+        $chunks = self::gatherOutputChunks($response);
+        $markdown = '';
+
+        if ($chunks !== []) {
+            $buffer = '';
+            foreach ($chunks as $chunk) {
+                $buffer .= self::stringifyChunk($chunk);
+            }
+
+            $markdown = trim($buffer);
         }
 
-        $buffer = '';
-        foreach ($chunks as $chunk) {
-            $buffer .= self::stringifyChunk($chunk);
+        $sources = self::extractSources($response);
+
+        return [
+            'markdown' => $markdown,
+            'sources' => $sources,
+        ];
+    }
+
+    /**
+     * @return array{internal: list<string>, web: list<string>}
+     */
+    public static function extractSources(array $payload): array
+    {
+        $sources = [
+            'internal' => [],
+            'web' => [],
+        ];
+
+        if (isset($payload['sources'])) {
+            $sources = self::normalizeSources($payload['sources']);
         }
 
-        return trim($buffer);
+        [$documents, $urls] = self::collectRawSources($payload);
+
+        foreach (array_keys($documents) as $documentId) {
+            self::pushUnique($sources['internal'], $documentId);
+        }
+
+        foreach (array_keys($urls) as $url) {
+            self::pushUnique($sources['web'], $url);
+        }
+
+        return $sources;
     }
 
     /**
@@ -161,5 +203,127 @@ final class ResponseFormatter
     public static function hasFinalMarkdown(string $markdown): bool
     {
         return str_contains($markdown, "```markdown");
+    }
+
+    /**
+     * @param mixed $sources
+     * @return array{internal: list<string>, web: list<string>}
+     */
+    private static function normalizeSources(mixed $sources): array
+    {
+        $normalized = [
+            'internal' => [],
+            'web' => [],
+        ];
+
+        if (!is_array($sources)) {
+            return $normalized;
+        }
+
+        if (isset($sources['internal'])) {
+            $normalized['internal'] = self::normalizeSourceList($sources['internal']);
+        }
+
+        if (isset($sources['web'])) {
+            $normalized['web'] = self::normalizeSourceList($sources['web']);
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * @param mixed $value
+     * @return list<string>
+     */
+    private static function normalizeSourceList(mixed $value): array
+    {
+        if (!is_array($value)) {
+            return [];
+        }
+
+        $result = [];
+        foreach ($value as $entry) {
+            if (!is_string($entry)) {
+                continue;
+            }
+
+            $trimmed = trim($entry);
+            if ($trimmed === '') {
+                continue;
+            }
+
+            self::pushUnique($result, $trimmed);
+        }
+
+        return $result;
+    }
+
+    /**
+     * @param list<string> $buffer
+     */
+    private static function pushUnique(array &$buffer, string $value): void
+    {
+        if ($value === '') {
+            return;
+        }
+
+        if (!in_array($value, $buffer, true)) {
+            $buffer[] = $value;
+        }
+    }
+
+    /**
+     * @return array{0: array<string, true>, 1: array<string, true>}
+     */
+    private static function collectRawSources(array $payload): array
+    {
+        $documents = [];
+        $urls = [];
+        $stack = [$payload];
+
+        while ($stack !== []) {
+            $current = array_pop($stack);
+            if (!is_array($current)) {
+                continue;
+            }
+
+            if (isset($current['document_id']) && is_string($current['document_id']) && $current['document_id'] !== '') {
+                $documents[$current['document_id']] = true;
+            }
+
+            if (isset($current['file_id']) && is_string($current['file_id']) && $current['file_id'] !== '') {
+                $documents[$current['file_id']] = true;
+            }
+
+            if (isset($current['annotations']) && is_array($current['annotations'])) {
+                foreach ($current['annotations'] as $annotation) {
+                    $stack[] = $annotation;
+                }
+            }
+
+            if (isset($current['results']) && is_array($current['results'])) {
+                foreach ($current['results'] as $result) {
+                    $stack[] = $result;
+                }
+            }
+
+            if (isset($current['url']) && is_string($current['url']) && $current['url'] !== '') {
+                if (filter_var($current['url'], FILTER_VALIDATE_URL)) {
+                    $urls[$current['url']] = true;
+                }
+            }
+
+            foreach ($current as $key => $value) {
+                if ($key === 'sources') {
+                    continue;
+                }
+
+                if (is_array($value)) {
+                    $stack[] = $value;
+                }
+            }
+        }
+
+        return [$documents, $urls];
     }
 }
