@@ -221,6 +221,25 @@ final class OpenAIClient
     {
         $messages = [];
 
+        if (($session['phase'] ?? 'collecte') === 'collecte') {
+            $pendingQuestion = SessionStore::getPendingCollecteQuestion($session);
+            if ($pendingQuestion !== null) {
+                $total = CollecteFlow::count();
+                $systemText = sprintf(
+                    "Phase collecte – question %d/%d (%s).\nPose uniquement la question suivante : «%s».\nAucune autre sortie n'est autorisée. Termine strictement par «⚠️ Attente réponse utilisateur». Reste en phase collecte et ne démarre ni plan, ni génération avant la fin des 9 questions obligatoires.",
+                    $pendingQuestion['order'],
+                    $total,
+                    $pendingQuestion['label'],
+                    $pendingQuestion['prompt']
+                );
+
+                $messages[] = [
+                    'role' => 'system',
+                    'content' => $this->buildTextContent('system', $systemText)
+                ];
+            }
+        }
+
         if (empty($session['summary']) && empty($session['recentTurns'])) {
             $messages[] = [
                 'role' => 'system',

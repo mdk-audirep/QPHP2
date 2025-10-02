@@ -121,14 +121,16 @@ function responseStart(array $data): void
     validateCommon($data);
 
     $session = SessionStore::create(Prompt::VERSION);
+    SessionStore::ensureCollecteState($session);
     if (isset($data['phaseHint'])) {
         SessionStore::updatePhase($session, $data['phaseHint']);
     }
     SessionStore::mergeMemory($session, $data['memoryDelta'] ?? null);
+    SessionStore::ensureCollecteState($session);
 
     $client = new OpenAIClient();
     $payload = $client->buildPayload($session, (string) $data['userMessage']);
-	// echo json_encode($payload);
+        // echo json_encode($payload);
     $result = $client->send($payload);
 
     $assistantMarkdown = ResponseFormatter::extractContent($result);
@@ -148,7 +150,8 @@ function responseStart(array $data): void
         'assistantMarkdown' => $assistantMarkdown,
         'memorySnapshot' => $session['memory'],
         'finalMarkdownPresent' => ResponseFormatter::hasFinalMarkdown($assistantMarkdown),
-        'nextAction' => 'ask_user'
+        'nextAction' => 'ask_user',
+        'collecteState' => SessionStore::exportCollecteState($session),
     ]);
 }
 
@@ -171,6 +174,15 @@ function responseContinue(array $data, bool $finalOverride): void
     }
 
     SessionStore::mergeMemory($session, $data['memoryDelta'] ?? null);
+    SessionStore::ensureCollecteState($session);
+
+    if ($finalOverride && !SessionStore::isCollecteComplete($session)) {
+        throw new InvalidArgumentException('Impossible de finaliser : répondez d’abord aux 9 questions obligatoires.');
+    }
+
+    if (!$finalOverride) {
+        SessionStore::registerCollecteAnswer($session, (string) $data['userMessage']);
+    }
 
     $client = new OpenAIClient();
     $payload = $client->buildPayload($session, (string) $data['userMessage'], $finalOverride);
@@ -233,6 +245,7 @@ function responseContinue(array $data, bool $finalOverride): void
         'memorySnapshot' => $session['memory'],
         'finalMarkdownPresent' => ResponseFormatter::hasFinalMarkdown($assistantMarkdown),
         'nextAction' => $finalOverride ? 'persist_and_render' : 'ask_user',
+        'collecteState' => SessionStore::exportCollecteState($session),
     ];
 
     $sendEvent([

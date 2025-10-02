@@ -34,6 +34,14 @@ const initialThematics = () => ([
   }
 ]);
 
+const defaultCollecteState = () => ({
+  nextIndex: 0,
+  total: 9,
+  completed: false,
+  pendingQuestion: null,
+  answers: {}
+});
+
 const state = {
   sessionId: null,
   promptVersion: window.PROMPT_VERSION,
@@ -45,7 +53,8 @@ const state = {
   showThemes: false,
   showSubThemes: false,
   activeThematicId: null,
-  activeThematicLabel: null
+  activeThematicLabel: null,
+  collecteState: defaultCollecteState()
 };
 
 const elements = {
@@ -215,6 +224,7 @@ function resetState() {
   state.showSubThemes = false;
   state.activeThematicId = null;
   state.activeThematicLabel = null;
+  state.collecteState = defaultCollecteState();
   elements.userInput.value = '';
   elements.finalMarkdown.value = '';
   renderMessages();
@@ -223,7 +233,8 @@ function resetState() {
   if (!window.OPENAI_ENABLED) {
     updateStatus('OPENAI désactivé : configurez OPENAI_API_KEY et VECTOR_STORE_ID.', true);
   } else {
-    updateStatus(message);
+    const progress = describeCollecteProgress();
+    updateStatus(progress ? `${message} (${progress})` : message);
   }
 }
 
@@ -241,6 +252,26 @@ function renderMessages() {
 function updateStatus(text, isError = false) {
   elements.statusBar.textContent = text;
   elements.statusBar.classList.toggle('status-error', isError);
+}
+
+function describeCollecteProgress() {
+  const collecte = state.collecteState;
+  if (!collecte || !Number.isFinite(collecte.total) || collecte.total <= 0) {
+    return '';
+  }
+
+  const answered = Math.min(Math.max(collecte.nextIndex ?? 0, 0), collecte.total);
+  const base = `Collecte ${answered}/${collecte.total}`;
+
+  if (collecte.completed) {
+    return `${base} – terminé`;
+  }
+
+  if (collecte.pendingQuestion?.label) {
+    return `${base} – prochaine : ${collecte.pendingQuestion.label}`;
+  }
+
+  return base;
 }
 
 function pushMessage(role, content) {
@@ -489,6 +520,11 @@ async function handleSubmit(event) {
   if (!text) return;
 
   const finalCommand = text.trim().toLowerCase() === '/final';
+  if (finalCommand && !state.collecteState?.completed) {
+    updateStatus('Terminez d’abord les 9 questions obligatoires avant d’utiliser /final.', true);
+    return;
+  }
+
   const payloadMessage = finalCommand ? 'Assembler le questionnaire complet validé.' : text;
   const endpoint = !state.sessionId ? 'start' : finalCommand ? 'final' : 'continue';
 
@@ -525,13 +561,16 @@ async function handleSubmit(event) {
     state.sessionId = envelope.sessionId;
     state.phase = envelope.phase;
     state.memory = envelope.memorySnapshot || {};
+    state.collecteState = envelope.collecteState || defaultCollecteState();
     if (Array.isArray(state.memory.collecte?.thematiques)) {
       syncThematics(state.memory.collecte.thematiques);
     }
     if (envelope.phase === 'final' && envelope.finalMarkdownPresent) {
       elements.finalMarkdown.value = envelope.assistantMarkdown;
     }
-    updateStatus(`Phase actuelle : ${envelope.phase}. Prochaine action : ${envelope.nextAction}`);
+    const progress = describeCollecteProgress();
+    const status = `Phase actuelle : ${envelope.phase}. Prochaine action : ${envelope.nextAction}`;
+    updateStatus(progress ? `${status} · ${progress}` : status);
   } catch (error) {
     updateStatus(error.message, true);
   } finally {
