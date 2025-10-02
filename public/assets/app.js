@@ -169,6 +169,7 @@ function renderMarkdown(markdown) {
       return;
     }
     const whitespaceText = normalizeWhitespace(node.textContent);
+
     const normalizedText = normalizeForSource(node.textContent);
     const matchesSourceLabel = sourceLabels.some((label) => {
       const normalizedLabel = normalizeForSource(label);
@@ -186,6 +187,7 @@ function renderMarkdown(markdown) {
     if (matchesSourceLabel) {
       markClosestBlock(node, 'source-section');
     }
+
     const headingMatch = whitespaceText.match(questionHeadingPattern);
     if (headingMatch) {
       const [, , headingLabel] = headingMatch;
@@ -194,6 +196,7 @@ function renderMarkdown(markdown) {
         markClosestBlock(node, 'question-heading');
       }
     }
+
     if (normalizedText === normalizeForSource('⚠️ Attente réponse utilisateur')) {
       markClosestBlock(node, 'awaiting-section');
     }
