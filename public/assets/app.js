@@ -286,22 +286,27 @@ function pushMessage(role, content) {
   }
 }
 
+const QUESTION_STEPS = {
+  THEMES: 7,
+  SUBTHEMES: 10
+};
+
 function handleAssistantState(content) {
   const normalizedContent = normalizeText(content);
   let hasStateChange = false;
 
-  if (normalizedContent.includes('question 7')) {
-    state.currentQuestionStep = 7;
+  if (normalizedContent.includes(`question ${QUESTION_STEPS.THEMES}`)) {
+    state.currentQuestionStep = QUESTION_STEPS.THEMES;
     state.showThemes = true;
     state.showSubThemes = false;
     state.activeThematicId = null;
     state.activeThematicLabel = null;
     hasStateChange = true;
-  } else if (normalizedContent.includes('question 11')) {
+  } else if (normalizedContent.includes(`question ${QUESTION_STEPS.SUBTHEMES}`)) {
     const thematicMatch = state.thematics.find((theme) =>
       normalizedContent.includes(normalizeText(theme.label))
     );
-    state.currentQuestionStep = 11;
+    state.currentQuestionStep = QUESTION_STEPS.SUBTHEMES;
     if (thematicMatch) {
       state.activeThematicId = thematicMatch.id;
       state.activeThematicLabel = thematicMatch.label;
