@@ -163,7 +163,7 @@ function renderMarkdown(markdown) {
     'Introduction',
     'Sous-thématiques'
   ].map((label) => normalizeText(label));
-  const questionHeadingPattern = /^(\d+)\s*[-–—]\s*(.+)$/;
+  const questionHeadingPattern = /^(?:(?:Q\.?|Question)\s*)?(\d+)\s*[-–—]\s*(.+)$/i;
   wrapper.querySelectorAll('*').forEach((node) => {
     if (!node.textContent) {
       return;
