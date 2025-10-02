@@ -49,9 +49,15 @@ final class ResponseFormatter
         }
 
         [$documents, $urls] = self::collectRawSources($payload);
+        $resolvedFileNames = self::extractResolvedFileNames($payload);
 
         foreach ($documents as $documentId => $parts) {
-            $label = self::buildSourceLabel($parts);
+            $partsWithName = $parts;
+            if (is_string($documentId) && isset($resolvedFileNames[$documentId])) {
+                array_unshift($partsWithName, $resolvedFileNames[$documentId]);
+            }
+
+            $label = self::buildSourceLabel($partsWithName);
             self::pushUnique($sources['internal'], $label ?? $documentId);
         }
 
@@ -104,6 +110,47 @@ final class ResponseFormatter
         }
 
         return $chunks;
+    }
+
+    /**
+     * @return array{document_ids: list<string>, urls: list<string>}
+     */
+    public static function summarizeSourceReferences(array $payload): array
+    {
+        [$documents, $urls] = self::collectRawSources($payload);
+
+        $documentIds = [];
+        foreach (array_keys($documents) as $documentId) {
+            if (!is_string($documentId)) {
+                continue;
+            }
+
+            $normalized = trim($documentId);
+            if ($normalized === '') {
+                continue;
+            }
+
+            $documentIds[] = $normalized;
+        }
+
+        $urlList = [];
+        foreach (array_keys($urls) as $url) {
+            if (!is_string($url)) {
+                continue;
+            }
+
+            $normalized = trim($url);
+            if ($normalized === '') {
+                continue;
+            }
+
+            $urlList[] = $normalized;
+        }
+
+        return [
+            'document_ids' => array_values(array_unique($documentIds)),
+            'urls' => array_values(array_unique($urlList)),
+        ];
     }
 
     /**
@@ -355,6 +402,34 @@ final class ResponseFormatter
         }
 
         return [$documents, $urls];
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private static function extractResolvedFileNames(array $payload): array
+    {
+        if (!isset($payload['resolved_file_names']) || !is_array($payload['resolved_file_names'])) {
+            return [];
+        }
+
+        $result = [];
+        foreach ($payload['resolved_file_names'] as $id => $name) {
+            if (!is_string($id) || !is_string($name)) {
+                continue;
+            }
+
+            $normalizedId = trim($id);
+            $normalizedName = trim($name);
+
+            if ($normalizedId === '' || $normalizedName === '') {
+                continue;
+            }
+
+            $result[$normalizedId] = $normalizedName;
+        }
+
+        return $result;
     }
 
     /**
