@@ -62,9 +62,18 @@ foreach ($questions as $question) {
 
     $systemMessage = $payload['input'][0]['content'][0]['text'];
 
-    $expectedInstructions = CollecteFlow::instructions($question['id']);
-    if ($expectedInstructions === []) {
-        $expectedInstructions = [sprintf('Pose la question suivante : «%s».', $question['prompt'])];
+    $baseInstructions = CollecteFlow::instructions($question['id']);
+    $expectedInstructions = CollecteFlow::withSourceTraceability($baseInstructions);
+    if ($baseInstructions === []) {
+        $expectedInstructions[] = sprintf('Pose la question suivante : «%s».', $question['prompt']);
+    }
+
+    $traceabilityInstruction = CollecteFlow::sourceTraceabilityInstruction();
+    if (!str_contains($systemMessage, $traceabilityInstruction)) {
+        throw new RuntimeException(sprintf(
+            "L'instruction de traçabilité des sources est absente pour la question %s.",
+            $question['id']
+        ));
     }
 
     foreach ($expectedInstructions as $instruction) {

@@ -4,6 +4,8 @@ namespace Questionnaire\Support;
 
 final class CollecteFlow
 {
+    private const SOURCE_TRACEABILITY_INSTRUCTION = "Indique avant de poser la question quelles sources tu viens de consulter (vector store prioritaire, web search uniquement en secours si l'information manque) et justifie ce choix en rappelant la hiérarchie de la section «Gestion des sources».";
+
     /**
      * @var array<int, array{
      *     id: string,
@@ -173,6 +175,24 @@ final class CollecteFlow
         }
 
         return $instructions;
+    }
+
+    /**
+     * @param list<string> $instructions
+     * @return list<string>
+     */
+    public static function withSourceTraceability(array $instructions): array
+    {
+        if (!in_array(self::SOURCE_TRACEABILITY_INSTRUCTION, $instructions, true)) {
+            array_unshift($instructions, self::SOURCE_TRACEABILITY_INSTRUCTION);
+        }
+
+        return $instructions;
+    }
+
+    public static function sourceTraceabilityInstruction(): string
+    {
+        return self::SOURCE_TRACEABILITY_INSTRUCTION;
     }
 
     /**

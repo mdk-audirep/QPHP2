@@ -329,9 +329,11 @@ final class OpenAIClient
      */
     private function buildQuestionInstructions(array $pendingQuestion): array
     {
-        $instructions = CollecteFlow::instructions($pendingQuestion['id']);
-        if ($instructions === []) {
-            return [sprintf('Pose la question suivante : «%s».', $pendingQuestion['prompt'])];
+        $baseInstructions = CollecteFlow::instructions($pendingQuestion['id']);
+        $instructions = CollecteFlow::withSourceTraceability($baseInstructions);
+
+        if ($baseInstructions === []) {
+            $instructions[] = sprintf('Pose la question suivante : «%s».', $pendingQuestion['prompt']);
         }
 
         $resolved = [];
