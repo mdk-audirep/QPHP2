@@ -56,12 +56,12 @@ public function send(array $payload, ?callable $onDelta = null): array
 
     try {
         // (facultatif) log minimal côté requête, sans la clé
-        error_log('[OpenAI request] ' . json_encode([
-            'endpoint'  => 'responses',
-            'model'     => $payload['model'] ?? null,
-            'has_tools' => isset($payload['tools']),
-            'stream'    => $payload['stream'] ?? null,
-        ], JSON_UNESCAPED_UNICODE));
+        // error_log('[OpenAI request] ' . json_encode([
+            // 'endpoint'  => 'responses',
+            // 'model'     => $payload['model'] ?? null,
+            // 'has_tools' => isset($payload['tools']),
+            // 'stream'    => $payload['stream'] ?? null,
+        // ], JSON_UNESCAPED_UNICODE));
 
         // 1) Appel Responses en streaming SSE
         $response = $this->client->post('responses', [
@@ -84,8 +84,8 @@ public function send(array $payload, ?callable $onDelta = null): array
         if ($responseId) {
             // Construit la liste des "include" (on met file_search + web_search, c’est inoffensif si absent)
             $includes = [
-                'output[*].file_search_call.search_results',
-                'output[*].web_search_call.search_results',
+                'file_search_call.results',
+                'web_search_call.results',
             ];
 
             // 4) Retrieve post-stream pour consolider les search_results (file_search/web_search)
@@ -98,12 +98,15 @@ public function send(array $payload, ?callable $onDelta = null): array
                     ],
                     'timeout' => 60,
                 ]);
-
+				 // error_log('[DEBUG file_search_call] ' . json_encode(
+					 // implode(',', $includes) ?? null,
+					 // JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE
+				// ));	
                 $finalPayload = json_decode((string) $final->getBody(), true);
-				 error_log('[DEBUG file_search_call] ' . json_encode(
-					 $finalPayload['output'][0]['file_search_call'] ?? null,
-					 JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE
-				));	
+				 // error_log('[DEBUG file_search_call] ' . json_encode(
+					 // $finalPayload['output'][0]['file_search_call'] ?? null,
+					 // JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE
+				// ));	
                 if (is_array($finalPayload)) {
                     // 5) On extrait les sources depuis le retrieve final
                     $finalSources = \Questionnaire\Support\ResponseFormatter::extractSources($finalPayload);
@@ -436,7 +439,7 @@ public function send(array $payload, ?callable $onDelta = null): array
 
         $payload = [
             'model' => 'gpt-5-mini',
-            'reasoning' => ['effort' => 'high'],
+            'reasoning' => ['effort' => 'medium'],
             'stream' => true,
             'parallel_tool_calls' => true,
 			'tools' => [
@@ -468,8 +471,8 @@ public function send(array $payload, ?callable $onDelta = null): array
                 'prompt_version' => $session['promptVersion']
             ],
             'include' => [
-                'output.file_search_call.search_results',
-                'output.web_search_call.search_results',
+                'file_search_call.results',
+                'web_search_call.results',
             ]
         ];
 
@@ -708,11 +711,3 @@ public function send(array $payload, ?callable $onDelta = null): array
         return $result;
     }
 }
-
-
-
-
-
-
-
-
