@@ -641,6 +641,148 @@ function extractThematicSuggestions(markdown) {
   return suggestions;
 }
 
+function extractThematicSuggestionsFromJson(content) {
+  if (typeof content !== 'string' || !content.trim()) {
+    return null;
+  }
+
+  const attemptParse = (raw) => {
+    if (typeof raw !== 'string') {
+      return null;
+    }
+
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    let parsed;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch (error) {
+      return null;
+    }
+
+    if (!parsed || typeof parsed !== 'object') {
+      return null;
+    }
+
+    const list = Array.isArray(parsed.thematique_suggestions)
+      ? parsed.thematique_suggestions
+      : [];
+
+    if (list.length === 0) {
+      return null;
+    }
+
+    const seenLabels = new Set();
+    const normalizedSuggestions = [];
+
+    list.forEach((item) => {
+      if (!item || typeof item !== 'object') {
+        return;
+      }
+
+      const rawLabel = typeof item.label === 'string' ? item.label.trim() : '';
+      if (!rawLabel) {
+        return;
+      }
+
+      const normalizedLabel = normalizeText(rawLabel);
+      if (!normalizedLabel || seenLabels.has(normalizedLabel)) {
+        return;
+      }
+
+      const rawSubs = Array.isArray(item.sous_thematiques)
+        ? item.sous_thematiques
+        : Array.isArray(item.subs)
+        ? item.subs
+        : [];
+
+      const seenSubs = new Set();
+      const subs = [];
+
+      rawSubs.forEach((subItem) => {
+        let subLabel = '';
+        if (typeof subItem === 'string') {
+          subLabel = subItem.trim();
+        } else if (subItem && typeof subItem === 'object' && typeof subItem.label === 'string') {
+          subLabel = subItem.label.trim();
+        }
+
+        if (!subLabel) {
+          return;
+        }
+
+        const normalizedSub = normalizeText(subLabel);
+        if (!normalizedSub || seenSubs.has(normalizedSub)) {
+          return;
+        }
+
+        seenSubs.add(normalizedSub);
+        subs.push(subLabel);
+      });
+
+      seenLabels.add(normalizedLabel);
+      normalizedSuggestions.push({ label: rawLabel, subs });
+    });
+
+    if (normalizedSuggestions.length === 0) {
+      return null;
+    }
+
+    return normalizedSuggestions;
+  };
+
+  const codeBlockPattern = /```[ \t]*([a-z0-9_-]+)?\s*([\s\S]*?)```/gi;
+  let codeMatch = codeBlockPattern.exec(content);
+  while (codeMatch) {
+    const lang = typeof codeMatch[1] === 'string' ? codeMatch[1].toLowerCase() : '';
+    if (!lang || lang === 'json' || lang === 'jsonc') {
+      const parsed = attemptParse(codeMatch[2]);
+      if (parsed) {
+        return parsed;
+      }
+    }
+    codeMatch = codeBlockPattern.exec(content);
+  }
+
+  const lowerContent = content.toLowerCase();
+  const marker = 'thematique_suggestions';
+  let markerIndex = lowerContent.indexOf(marker);
+
+  while (markerIndex !== -1) {
+    let start = markerIndex;
+    while (start >= 0 && content[start] !== '{') {
+      start -= 1;
+    }
+
+    if (start >= 0) {
+      let depth = 0;
+      for (let position = start; position < content.length; position += 1) {
+        const char = content[position];
+        if (char === '{') {
+          depth += 1;
+        } else if (char === '}') {
+          depth -= 1;
+          if (depth === 0) {
+            const snippet = content.slice(start, position + 1);
+            const parsed = attemptParse(snippet);
+            if (parsed) {
+              return parsed;
+            }
+            break;
+          }
+        }
+      }
+    }
+
+    markerIndex = lowerContent.indexOf(marker, markerIndex + marker.length);
+  }
+
+  return null;
+}
+
 function applyThematicSuggestions(suggestions) {
   const labels = Array.isArray(suggestions)
     ? suggestions.map((label) => (typeof label === 'string' ? label.trim() : ''))
@@ -761,6 +903,189 @@ function applyThematicSuggestions(suggestions) {
       }
     }
   }
+
+  state.thematics = nextThematics;
+  return changed;
+}
+
+function applyJsonThematicSuggestions(entries) {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return false;
+  }
+
+  const sanitizedEntries = [];
+  const seenLabels = new Set();
+
+  entries.forEach((entry) => {
+    if (!entry || typeof entry !== 'object') {
+      return;
+    }
+
+    const label = typeof entry.label === 'string' ? entry.label.trim() : '';
+    if (!label) {
+      return;
+    }
+
+    const normalizedLabel = normalizeText(label);
+    if (!normalizedLabel || seenLabels.has(normalizedLabel)) {
+      return;
+    }
+
+    const rawSubs = Array.isArray(entry.subs)
+      ? entry.subs
+      : Array.isArray(entry.sous_thematiques)
+      ? entry.sous_thematiques
+      : [];
+
+    const subs = [];
+    const seenSubs = new Set();
+
+    rawSubs.forEach((subItem) => {
+      let subLabel = '';
+      if (typeof subItem === 'string') {
+        subLabel = subItem.trim();
+      } else if (subItem && typeof subItem === 'object' && typeof subItem.label === 'string') {
+        subLabel = subItem.label.trim();
+      }
+
+      if (!subLabel) {
+        return;
+      }
+
+      const normalizedSub = normalizeText(subLabel);
+      if (!normalizedSub || seenSubs.has(normalizedSub)) {
+        return;
+      }
+
+      seenSubs.add(normalizedSub);
+      subs.push(subLabel);
+    });
+
+    seenLabels.add(normalizedLabel);
+    sanitizedEntries.push({ label, subs });
+  });
+
+  if (sanitizedEntries.length === 0) {
+    return false;
+  }
+
+  const existingMap = new Map();
+  state.thematics.forEach((theme) => {
+    if (!theme || typeof theme.label !== 'string') {
+      return;
+    }
+    const key = normalizeText(theme.label);
+    if (!key || existingMap.has(key)) {
+      return;
+    }
+    existingMap.set(key, theme);
+  });
+
+  const usedIds = new Set();
+  const ensureUniqueId = (candidate, fallback) => {
+    let base = typeof candidate === 'string' ? candidate.trim() : '';
+    if (!base) {
+      base = typeof fallback === 'string' ? fallback.trim() : '';
+    }
+    if (!base) {
+      base = `id-${Date.now()}`;
+    }
+    let result = base;
+    let suffix = 1;
+    while (usedIds.has(result)) {
+      result = `${base}-${suffix++}`;
+    }
+    usedIds.add(result);
+    return result;
+  };
+
+  const matchedKeys = new Set();
+  const nextThematics = [];
+
+  sanitizedEntries.forEach((entry) => {
+    const key = normalizeText(entry.label);
+    const existing = key ? existingMap.get(key) : null;
+
+    const baseThemeId = existing?.id || computeStableThematicId(entry.label);
+    const themeId = ensureUniqueId(baseThemeId, 'theme');
+
+    const subs = [];
+    const existingSubMap = new Map();
+    if (existing && Array.isArray(existing.subs)) {
+      existing.subs.forEach((sub) => {
+        if (!sub || typeof sub.label !== 'string') {
+          return;
+        }
+        const subKey = normalizeText(sub.label);
+        if (!subKey || existingSubMap.has(subKey)) {
+          return;
+        }
+        existingSubMap.set(subKey, sub);
+      });
+    }
+
+    entry.subs.forEach((subLabel) => {
+      const subKey = normalizeText(subLabel);
+      const existingSub = subKey ? existingSubMap.get(subKey) : null;
+      const baseSubId = existingSub?.id || `${themeId}-${computeStableThematicId(subLabel)}`;
+      const subId = ensureUniqueId(baseSubId, `${themeId}-sub`);
+      subs.push({
+        id: subId,
+        label: subLabel,
+        checked: existingSub?.checked ?? true,
+        custom: existingSub?.custom ?? false
+      });
+    });
+
+    matchedKeys.add(key);
+    nextThematics.push({
+      id: themeId,
+      label: entry.label,
+      checked: existing?.checked ?? true,
+      custom: existing?.custom ?? false,
+      subs
+    });
+  });
+
+  state.thematics.forEach((theme) => {
+    if (!theme) {
+      return;
+    }
+    const key = typeof theme.label === 'string' ? normalizeText(theme.label) : '';
+    if (key && matchedKeys.has(key)) {
+      return;
+    }
+    const hasSelection = !!theme.checked || (Array.isArray(theme.subs) && theme.subs.some((sub) => sub && sub.checked));
+    if (!theme.custom && !hasSelection) {
+      return;
+    }
+    const themeId = ensureUniqueId(theme.id || computeStableThematicId(theme.label), 'theme');
+    const subs = Array.isArray(theme.subs)
+      ? theme.subs.map((sub) => {
+          if (!sub) {
+            return null;
+          }
+          const subId = ensureUniqueId(sub.id || `${themeId}-${computeStableThematicId(sub.label)}`, `${themeId}-sub`);
+          return {
+            id: subId,
+            label: sub.label,
+            checked: !!sub.checked,
+            custom: !!sub.custom
+          };
+        }).filter(Boolean)
+      : [];
+    nextThematics.push({
+      id: themeId,
+      label: theme.label,
+      checked: !!theme.checked,
+      custom: !!theme.custom,
+      subs
+    });
+  });
+
+  const previousJson = JSON.stringify(state.thematics);
+  const nextJson = JSON.stringify(nextThematics);
+  const changed = previousJson !== nextJson;
 
   state.thematics = nextThematics;
   return changed;
