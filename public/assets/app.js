@@ -1,4 +1,4 @@
-const initialThematics = () => ([
+const DEFAULT_THEMATICS_BLUEPRINT = [
   {
     id: 'satisfaction',
     label: 'Satisfaction client',
@@ -32,7 +32,7 @@ const initialThematics = () => ([
       { id: 'pack', label: 'Packaging & merchandising', checked: false, custom: false }
     ]
   }
-]);
+];
 
 const defaultCollecteState = () => ({
   nextIndex: 0,
@@ -48,7 +48,7 @@ const state = {
   phase: 'collecte',
   memory: {},
   messages: [],
-  thematics: initialThematics(),
+  thematics: [],
   currentQuestionStep: null,
   showThemes: false,
   showSubThemes: false,
@@ -131,6 +131,212 @@ function escapeHtml(text) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+function cloneThematicList(list) {
+  if (!Array.isArray(list)) {
+    return [];
+  }
+
+  return list.map((theme) => ({
+    ...theme,
+    subs: Array.isArray(theme.subs)
+      ? theme.subs.map((sub) => ({ ...sub }))
+      : []
+  }));
+}
+
+function computeStableThematicId(label) {
+  const normalized = normalizeText(label || '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+  if (normalized) {
+    return normalized;
+  }
+
+  return `theme-${Date.now()}`;
+}
+
+function extractThematicSuggestions(markdown) {
+  if (typeof markdown !== 'string' || !markdown.trim()) {
+    return [];
+  }
+
+  const lines = markdown.split(/\r?\n/);
+  const seen = new Set();
+  const suggestions = [];
+
+  lines.forEach((rawLine) => {
+    const line = rawLine.trim();
+    if (!line) {
+      return;
+    }
+
+    const match = line.match(/^([-*+]\s+|\d+[.)\s]+)(.*)$/);
+    if (!match) {
+      return;
+    }
+
+    let candidate = match[2] || '';
+    candidate = candidate.replace(/^[\-*+\d.\)\s]+/, '').trim();
+    if (!candidate) {
+      return;
+    }
+
+    const colonIndex = candidate.indexOf(':');
+    const parenIndex = candidate.indexOf('(');
+    let cutoff = candidate.length;
+    if (colonIndex !== -1) {
+      cutoff = Math.min(cutoff, colonIndex);
+    }
+    if (parenIndex !== -1) {
+      cutoff = Math.min(cutoff, parenIndex);
+    }
+
+    candidate = candidate.slice(0, cutoff).trim();
+    candidate = candidate.replace(/[*_`]/g, '').trim();
+    candidate = candidate.replace(/\s*[–—-]\s*$/u, '').trim();
+
+    if (!candidate) {
+      return;
+    }
+
+    const normalized = normalizeText(candidate);
+    if (!normalized || seen.has(normalized)) {
+      return;
+    }
+
+    seen.add(normalized);
+    suggestions.push(candidate);
+  });
+
+  return suggestions;
+}
+
+function applyThematicSuggestions(suggestions) {
+  const labels = Array.isArray(suggestions)
+    ? suggestions.map((label) => (typeof label === 'string' ? label.trim() : ''))
+    : [];
+
+  const filteredLabels = labels.filter(Boolean);
+
+  if (filteredLabels.length === 0) {
+    if (state.thematics.length === 0) {
+      state.thematics = cloneThematicList(DEFAULT_THEMATICS_BLUEPRINT);
+      return true;
+    }
+    return false;
+  }
+
+  const existingMap = new Map();
+  const usedIds = new Set();
+
+  state.thematics.forEach((theme) => {
+    if (!theme || typeof theme.label !== 'string') {
+      return;
+    }
+    const key = normalizeText(theme.label);
+    if (!key) {
+      return;
+    }
+    if (!existingMap.has(key)) {
+      existingMap.set(key, theme);
+    }
+    if (theme.id) {
+      usedIds.add(theme.id);
+    }
+  });
+
+  const usedKeys = new Set();
+  let changed = false;
+  const nextThematics = [];
+
+  const ensureUniqueId = (baseId) => {
+    let candidate = baseId && baseId.trim() ? baseId.trim() : 'theme';
+    let uniqueId = candidate;
+    let suffix = 1;
+    while (usedIds.has(uniqueId)) {
+      uniqueId = `${candidate}-${suffix++}`;
+    }
+    usedIds.add(uniqueId);
+    return uniqueId;
+  };
+
+  filteredLabels.forEach((label) => {
+    const key = normalizeText(label);
+    if (!key) {
+      return;
+    }
+
+    const existing = existingMap.get(key) || null;
+    if (existing) {
+      usedKeys.add(key);
+      nextThematics.push({
+        ...existing,
+        label,
+        subs: Array.isArray(existing.subs)
+          ? existing.subs.map((sub) => ({ ...sub }))
+          : []
+      });
+      if (existing.label !== label) {
+        changed = true;
+      }
+      return;
+    }
+
+    const baseId = computeStableThematicId(label);
+    const id = ensureUniqueId(baseId);
+    nextThematics.push({
+      id,
+      label,
+      checked: false,
+      custom: false,
+      subs: []
+    });
+    usedKeys.add(key);
+    changed = true;
+  });
+
+  state.thematics.forEach((theme) => {
+    if (!theme) {
+      return;
+    }
+    const key = typeof theme.label === 'string' ? normalizeText(theme.label) : '';
+    if (key && usedKeys.has(key)) {
+      return;
+    }
+    const hasSelection = !!theme.checked || (Array.isArray(theme.subs) && theme.subs.some((sub) => sub && sub.checked));
+    if (theme.custom || hasSelection) {
+      if (theme.id) {
+        usedIds.add(theme.id);
+      }
+      nextThematics.push({
+        ...theme,
+        subs: Array.isArray(theme.subs)
+          ? theme.subs.map((sub) => ({ ...sub }))
+          : []
+      });
+    }
+  });
+
+  if (nextThematics.length !== state.thematics.length) {
+    changed = true;
+  } else {
+    for (let index = 0; index < nextThematics.length; index += 1) {
+      if (nextThematics[index].id !== state.thematics[index].id) {
+        changed = true;
+        break;
+      }
+      if (nextThematics[index].checked !== state.thematics[index].checked) {
+        changed = true;
+        break;
+      }
+    }
+  }
+
+  state.thematics = nextThematics;
+  return changed;
 }
 
 function normalizeSources(raw) {
@@ -436,10 +642,7 @@ function renderAssistantHtml(content, sources) {
 }
 
 function cloneThematics() {
-  return state.thematics.map((theme) => ({
-    ...theme,
-    subs: theme.subs.map((sub) => ({ ...sub }))
-  }));
+  return cloneThematicList(state.thematics);
 }
 
 function renderThematics() {
@@ -560,7 +763,7 @@ function resetState() {
   state.phase = 'collecte';
   state.memory = {};
   state.messages = [];
-  state.thematics = initialThematics();
+  state.thematics = [];
   state.currentQuestionStep = null;
   state.showThemes = false;
   state.showSubThemes = false;
@@ -803,6 +1006,8 @@ function handleAssistantState(content) {
   const normalizedContent = normalizeText(content);
 
   if (normalizedContent.includes(`question ${QUESTION_STEPS.THEMES}`)) {
+    const suggestions = extractThematicSuggestions(content);
+    applyThematicSuggestions(suggestions);
     state.collecteState.pendingQuestion = {
       id: 'thematiques',
       order: QUESTION_STEPS.THEMES,
@@ -811,6 +1016,7 @@ function handleAssistantState(content) {
       index: QUESTION_STEPS.THEMES - 1
     };
     syncQuestionStepFromCollecteState();
+    renderThematics();
     return;
   }
 
