@@ -194,7 +194,7 @@ final class ResponseFormatter
         }
 
         if (!is_array($content)) {
-            return is_string($content) ? $content : '';
+            return is_string($content) ? self::stripInternalFileciteMarkers($content) : '';
         }
 
         $buffer = '';
@@ -211,7 +211,7 @@ final class ResponseFormatter
     private static function stringifyContent(mixed $entry): string
     {
         if (!is_array($entry)) {
-            return is_string($entry) ? $entry : '';
+            return is_string($entry) ? self::stripInternalFileciteMarkers($entry) : '';
         }
 
         $type = $entry['type'] ?? '';
@@ -236,7 +236,7 @@ final class ResponseFormatter
     private static function stringifyText(mixed $text): string
     {
         if (is_string($text)) {
-            return $text;
+            return self::stripInternalFileciteMarkers($text);
         }
 
         if (is_array($text)) {
@@ -245,10 +245,28 @@ final class ResponseFormatter
                 $buffer .= self::stringifyText($piece);
             }
 
-            return $buffer;
+            return self::stripInternalFileciteMarkers($buffer);
         }
 
         return '';
+    }
+
+    private static function stripInternalFileciteMarkers(string $text): string
+    {
+        if (!preg_match('/∎\s*filecite/iu', $text)) {
+            return $text;
+        }
+
+        $cleaned = preg_replace('/[ \t]*∎\s*filecite[^∎]*∎[ \t]*/iu', ' ', $text);
+        if ($cleaned === null) {
+            $cleaned = $text;
+        }
+
+        $cleaned = preg_replace('/[ \t]+(\r?\n)/', '$1', $cleaned) ?? $cleaned;
+        $cleaned = preg_replace('/ {2,}/', ' ', $cleaned) ?? $cleaned;
+        $cleaned = preg_replace('/^[ \t]+|[ \t]+$/u', '', $cleaned) ?? $cleaned;
+
+        return $cleaned;
     }
 
     public static function detectPhase(string $markdown, string $fallback): string

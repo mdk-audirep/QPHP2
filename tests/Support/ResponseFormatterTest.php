@@ -312,6 +312,20 @@ namespace {
         throw new RuntimeException('Les sources web formatées sont incorrectes.');
     }
 
+    $markerPayload = [
+        'output_text' => [
+            "Introduction ∎filecite_internal_001∎\n",
+            'Suite ∎filecite-foo∎fin',
+        ],
+    ];
+
+    $formattedWithMarkers = ResponseFormatter::formatAssistantResponse($markerPayload);
+    $expectedMarkdownWithMarkers = "Introduction\nSuite fin";
+
+    if ($formattedWithMarkers['markdown'] !== $expectedMarkdownWithMarkers) {
+        throw new RuntimeException('Le nettoyage des marqueurs filecite est incorrect.');
+    }
+
     $regressionPayload = [
         'response' => [
             'output' => [
