@@ -997,13 +997,10 @@ function syncQuestionStepFromCollecteState() {
 }
 
 function handleAssistantState(content) {
-  syncQuestionStepFromCollecteState();
-
-  if (state.collecteState?.pendingQuestion) {
-    return;
-  }
-
   const normalizedContent = normalizeText(content);
+  const hadPendingQuestion = !!state.collecteState?.pendingQuestion;
+
+  let handledStateUpdate = false;
 
   if (normalizedContent.includes(`question ${QUESTION_STEPS.THEMES}`)) {
     const suggestions = extractThematicSuggestions(content);
@@ -1015,12 +1012,10 @@ function handleAssistantState(content) {
       prompt: '',
       index: QUESTION_STEPS.THEMES - 1
     };
-    syncQuestionStepFromCollecteState();
-    renderThematics();
-    return;
+    handledStateUpdate = true;
   }
 
-  if (normalizedContent.includes(`question ${QUESTION_STEPS.SUBTHEMES}`)) {
+  if (!handledStateUpdate && normalizedContent.includes(`question ${QUESTION_STEPS.SUBTHEMES}`)) {
     const thematicMatch = state.thematics.find((theme) =>
       normalizedContent.includes(normalizeText(theme.label))
     );
@@ -1035,14 +1030,23 @@ function handleAssistantState(content) {
       thematicLabel: thematicMatch?.label ?? state.activeThematicLabel ?? null
     };
 
-    syncQuestionStepFromCollecteState();
-    return;
+    handledStateUpdate = true;
   }
 
-  if (normalizedContent.includes('question') && state.collecteState?.pendingQuestion) {
+  if (
+    !handledStateUpdate &&
+    normalizedContent.includes('question') &&
+    state.collecteState?.pendingQuestion
+  ) {
     state.collecteState.pendingQuestion = null;
+    handledStateUpdate = true;
+  }
+
+  if (handledStateUpdate || hadPendingQuestion) {
     syncQuestionStepFromCollecteState();
   }
+
+  renderThematics();
 }
 
 function buildMemoryDelta() {
