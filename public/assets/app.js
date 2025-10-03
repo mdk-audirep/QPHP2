@@ -273,7 +273,11 @@ function renderMarkdown(markdown) {
 
   const normalizeWhitespace = (value) => value.replace(/\s+/g, ' ').trim();
   const normalizeForSource = (value) => {
-    const trimmed = normalizeWhitespace(value).replace(/[:\s]+$/, '');
+    const leadingTrimmed = normalizeWhitespace(value).replace(
+      /^(?:[|∣•·▪◦●○‣⁃*\-–—]+\s*)+/u,
+      ''
+    );
+    const trimmed = leadingTrimmed.replace(/[:\s]+$/u, '');
     return normalizeText(trimmed);
   };
   const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
