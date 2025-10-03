@@ -279,6 +279,10 @@ body {
     font-weight: 600;
 }
 
+.assistant-sources {
+    display: none !important;
+}
+
 .chat-message pre {
     background: rgba(2, 6, 23, 0.85);
     padding: 1rem;
