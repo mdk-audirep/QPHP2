@@ -359,6 +359,21 @@ assert.ok(!/assistant-sources/.test(renderedSources.html), 'Should not append as
 const occurrences = (renderedSources.html.match(/Sources internes utilisées/g) || []).length;
 assert.equal(occurrences, 1, 'Should render only one internal sources heading');
 
+const prefixedSourcesContent = [
+  '| Sources internes utilisées : Document interne',
+  '',
+  '- Note de cadrage'
+].join('\n');
+const prefixedRendered = renderAssistantHtml(prefixedSourcesContent, { internal: [], web: [] });
+assert.equal(prefixedRendered.hasSourceSection, true, 'Expected detection with prefixed separator');
+assert.ok(
+  /<p[^>]*class=\"[^\"]*source-section[^\"]*\">\| Sources internes utilisées : Document interne[\s\S]*?<\/p>/.test(
+    prefixedRendered.html
+  ),
+  'Should mark prefixed sources heading as source-section'
+);
+assert.ok(!/assistant-sources/.test(prefixedRendered.html), 'Should not append assistant sources when prefixed heading present');
+
 const normalizedSources = normalizeSources({
   internal: ['Guide interne.md — Section 2 – Aperçu'],
   web: ['Article externe — Résumé — https://example.net/resource']
