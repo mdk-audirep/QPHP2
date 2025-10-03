@@ -261,7 +261,7 @@ body {
     border-color: rgba(148, 163, 184, 0.2);
 }
 
-.chat-message.assistant .source-section,
+/* .chat-message.assistant .source-section, */
 .chat-message.assistant .awaiting-section {
     display: block;
     margin: 1.1rem 0;
@@ -270,6 +270,7 @@ body {
 }
 
 .chat-message.assistant .source-section {
+	display:none;
     font-weight: 600;
 }
 
@@ -308,9 +309,6 @@ body {
 .form-actions {
     display: flex;
     justify-content: flex-end;
-}
-.source-section {
-	display:none;
 }
 .form-actions button {
     background: linear-gradient(135deg, #38bdf8 0%, #0ea5e9 100%);
