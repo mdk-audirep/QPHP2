@@ -357,5 +357,36 @@ namespace {
         throw new RuntimeException('Regression sources incorrectes : ' . json_encode($regressionSources, JSON_UNESCAPED_UNICODE));
     }
 
+    $generatedIdPayload = [
+        'response' => [
+            'output' => [
+                [
+                    'content' => [
+                        [
+                            'type' => 'output_text',
+                            'text' => 'Réponse avec identifiants générés',
+                            'annotations' => [
+                                ['type' => 'file_citation', 'document_id' => '\\archives\\turn1file1'],
+                                ['type' => 'file_citation', 'document_id' => '\\archives\\turn2file7'],
+                                ['type' => 'file_citation', 'document_id' => 'doc_reference'],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ],
+    ];
+
+    $generatedSources = ResponseFormatter::extractSources($generatedIdPayload);
+
+    $expectedGeneratedSources = [
+        'internal' => ['doc_reference', 'Document interne 1', 'Document interne 2'],
+        'web' => [],
+    ];
+
+    if ($generatedSources !== $expectedGeneratedSources) {
+        throw new RuntimeException('Nettoyage des identifiants générés incorrect : ' . json_encode($generatedSources, JSON_UNESCAPED_UNICODE));
+    }
+
     echo "ResponseFormatter sources test passed with search result labels.\n";
 }

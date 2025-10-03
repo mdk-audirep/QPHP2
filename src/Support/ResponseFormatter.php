@@ -51,6 +51,8 @@ final class ResponseFormatter
         [$documents, $urls] = self::collectRawSources($payload);
         $resolvedFileNames = self::extractResolvedFileNames($payload);
 
+        $placeholderIndex = 1;
+
         foreach ($documents as $documentId => $parts) {
             $partsWithName = $parts;
             if (is_string($documentId) && isset($resolvedFileNames[$documentId])) {
@@ -58,7 +60,18 @@ final class ResponseFormatter
             }
 
             $label = self::buildSourceLabel($partsWithName);
-            self::pushUnique($sources['internal'], $label ?? $documentId);
+            if ($label === null && is_string($documentId)) {
+                if (self::isGeneratedDocumentId($documentId)) {
+                    $label = self::generateInternalPlaceholderLabel($placeholderIndex);
+                    $placeholderIndex++;
+                } else {
+                    $label = $documentId;
+                }
+            }
+
+            if ($label !== null) {
+                self::pushUnique($sources['internal'], $label);
+            }
         }
 
         foreach ($urls as $url => $parts) {
@@ -459,6 +472,16 @@ final class ResponseFormatter
         }
 
         return implode(' — ', $buffer);
+    }
+
+    private static function generateInternalPlaceholderLabel(int $index): string
+    {
+        return sprintf('Document interne %d', $index);
+    }
+
+    private static function isGeneratedDocumentId(string $value): bool
+    {
+        return preg_match('/\\\\turn\d+file\d+$/', $value) === 1;
     }
 
     private static function appendUrlToLabel(string $label, string $url): string

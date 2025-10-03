@@ -370,6 +370,21 @@ const linkMatch = renderedAssistant.html.match(/<a [^>]*href=\"https:\/\/example
 assert.ok(linkMatch, 'Expected a link for the web source');
 assert.equal(linkMatch[1], 'Article externe — Résumé', 'Link text should prefer readable label');
 
+const sanitizedInternalSources = normalizeSources({
+  internal: [
+    { label: '', id: '\\archives\\turn3file2' },
+    'Document interne 3',
+    '\\archives\\turn4file8'
+  ],
+  web: []
+});
+const sanitizedInternalLabels = sanitizedInternalSources.internal.map((item) => item.label);
+assert.equal(
+  sanitizedInternalLabels.join('||'),
+  'Document interne 3',
+  'Should ignore generated identifiers without human-facing metadata'
+);
+
 const renderContext = {
   console,
   document: {
