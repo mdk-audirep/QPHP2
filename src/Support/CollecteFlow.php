@@ -39,6 +39,7 @@ final class CollecteFlow
             'instructions' => [
                 "Analyse la réponse précédente pour suggérer des quotas types (âge, genre, localisation) si cela peut aider la réflexion.",
                 "Pose ensuite la question suivante : {{prompt}}",
+				"En fin de réponse, liste les sources du vector store dans une section Sources utilisées (nom du fichier + page si dispo), sans citations inline.",				
             ],
         ],
         [
@@ -49,6 +50,7 @@ final class CollecteFlow
             'instructions' => [
                 "Rappelle les durées usuelles (moins de 10 min, 10-20 questions) si l'utilisateur n'a pas encore précisé ce point.",
                 "Pose ensuite la question suivante : «{{prompt}}».",
+				"En fin de réponse, liste les sources du vector store dans une section Sources utilisées (nom du fichier + page si dispo), sans citations inline.",				
             ],
         ],
         [
@@ -59,6 +61,7 @@ final class CollecteFlow
             'instructions' => [
                 "Reformule la demande pour confirmer le volume de questions attendu.",
                 "Pose ensuite la question suivante : «{{prompt}}».",
+				"En fin de réponse, liste les sources du vector store dans une section Sources utilisées (nom du fichier + page si dispo), sans citations inline.",					
             ],
         ],
         [
@@ -69,6 +72,7 @@ final class CollecteFlow
             'instructions' => [
                 "Présente les principaux modes de collecte possibles et invite l'utilisateur à confirmer ou compléter son choix.",
                 "Pose ensuite la question suivante : «{{prompt}}».",
+				"En fin de réponse, liste les sources du vector store dans une section Sources utilisées (nom du fichier + page si dispo), sans citations inline.",	
             ],
         ],
         [
@@ -79,6 +83,7 @@ final class CollecteFlow
             'instructions' => [
                 "Reformule brièvement le contexte stratégique déjà partagé pour montrer que tu l'as bien compris.",
                 "Pose ensuite la question suivante : «{{prompt}}».",
+				"En fin de réponse, liste les sources du vector store dans une section Sources utilisées (nom du fichier + page si dispo), sans citations inline.",					
             ],
         ],
         [
@@ -109,6 +114,8 @@ final class CollecteFlow
             'instructions' => [
                 "Invite l'utilisateur à préciser s'il souhaite un mail d'invitation, une introduction enquêteur ou les deux.",
                 "Pose ensuite la question suivante : «{{prompt}}».",
+				"N'hésite pas à utiliser web_search pour les bonnes pratiques",
+				"En fin de réponse, liste les sources du vector store dans une section Sources utilisées (nom du fichier + page si dispo), sans citations inline.",					
             ],
         ],
     ];
