@@ -146,6 +146,433 @@ function cloneThematicList(list) {
   }));
 }
 
+function snapshotThematics(list) {
+  if (!Array.isArray(list)) {
+    return '[]';
+  }
+
+  const normalized = list.map((theme) => {
+    const safeTheme = theme && typeof theme === 'object' ? theme : {};
+    const subs = Array.isArray(safeTheme.subs) ? safeTheme.subs : [];
+
+    return {
+      id: typeof safeTheme.id === 'string' ? safeTheme.id : null,
+      label: typeof safeTheme.label === 'string' ? safeTheme.label : '',
+      checked: !!safeTheme.checked,
+      custom: !!safeTheme.custom,
+      subs: subs.map((sub) => {
+        const safeSub = sub && typeof sub === 'object' ? sub : {};
+        return {
+          id: typeof safeSub.id === 'string' ? safeSub.id : null,
+          label: typeof safeSub.label === 'string' ? safeSub.label : '',
+          checked: !!safeSub.checked,
+          custom: !!safeSub.custom
+        };
+      })
+    };
+  });
+
+  return JSON.stringify(normalized);
+}
+
+function extractJsonObjectByKey(text, key) {
+  if (typeof text !== 'string' || typeof key !== 'string' || !key) {
+    return null;
+  }
+
+  const quotedKey = `"${key}"`;
+  let searchIndex = text.indexOf(quotedKey);
+
+  while (searchIndex !== -1) {
+    const start = text.lastIndexOf('{', searchIndex);
+    if (start === -1) {
+      searchIndex = text.indexOf(quotedKey, searchIndex + quotedKey.length);
+      continue;
+    }
+
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let index = start; index < text.length; index += 1) {
+      const char = text[index];
+
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+
+      if (char === '\\') {
+        if (inString) {
+          escaped = true;
+        }
+        continue;
+      }
+
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
+
+      if (inString) {
+        continue;
+      }
+
+      if (char === '{') {
+        depth += 1;
+      } else if (char === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          return text.slice(start, index + 1).trim();
+        }
+      }
+    }
+
+    searchIndex = text.indexOf(quotedKey, searchIndex + quotedKey.length);
+  }
+
+  return null;
+}
+
+function safeParseThematicPayload(candidate) {
+  if (typeof candidate !== 'string' || !candidate.trim()) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(candidate.trim());
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null;
+    }
+    if (!Array.isArray(parsed.thematique_suggestions)) {
+      return null;
+    }
+    return parsed;
+  } catch (error) {
+    return null;
+  }
+}
+
+function findThematicJsonPayload(content) {
+  if (typeof content !== 'string') {
+    return null;
+  }
+
+  const candidates = [];
+  const fencePattern = /```(?:json)?\s*([\s\S]*?)```/gi;
+  let match = fencePattern.exec(content);
+  while (match) {
+    if (match[1]) {
+      candidates.push(match[1].trim());
+    }
+    match = fencePattern.exec(content);
+  }
+
+  const inlineCandidate = extractJsonObjectByKey(content, 'thematique_suggestions');
+  if (inlineCandidate) {
+    candidates.push(inlineCandidate);
+  }
+
+  for (let index = 0; index < candidates.length; index += 1) {
+    const payload = safeParseThematicPayload(candidates[index]);
+    if (payload) {
+      return payload;
+    }
+  }
+
+  return null;
+}
+
+function normalizeThematicJsonEntry(entry) {
+  if (typeof entry === 'string') {
+    const label = entry.trim();
+    if (!label) {
+      return null;
+    }
+    return { id: null, label, subs: [] };
+  }
+
+  if (!entry || typeof entry !== 'object') {
+    return null;
+  }
+
+  const label = typeof entry.label === 'string' ? entry.label.trim() : '';
+  if (!label) {
+    return null;
+  }
+
+  const id = typeof entry.id === 'string' ? entry.id.trim() : null;
+  const possibleKeys = [
+    'sous_thematiques',
+    'sousthematiques',
+    'sousThematiques',
+    'subthemes',
+    'subThemes',
+    'subs'
+  ];
+
+  let rawSubs = null;
+  for (let idx = 0; idx < possibleKeys.length; idx += 1) {
+    const key = possibleKeys[idx];
+    if (Object.prototype.hasOwnProperty.call(entry, key) && Array.isArray(entry[key])) {
+      rawSubs = entry[key];
+      break;
+    }
+  }
+
+  const subs = [];
+  if (Array.isArray(rawSubs)) {
+    const seen = new Set();
+    rawSubs.forEach((item) => {
+      let candidate = '';
+      if (typeof item === 'string') {
+        candidate = item.trim();
+      } else if (item && typeof item === 'object') {
+        if (typeof item.label === 'string') {
+          candidate = item.label.trim();
+        } else if (typeof item.name === 'string') {
+          candidate = item.name.trim();
+        }
+      }
+
+      if (!candidate) {
+        return;
+      }
+
+      const normalized = normalizeText(candidate);
+      if (!normalized || seen.has(normalized)) {
+        return;
+      }
+
+      seen.add(normalized);
+      subs.push(candidate);
+    });
+  }
+
+  return { id, label, subs };
+}
+
+function extractThematicSuggestionsFromJson(content) {
+  const payload = findThematicJsonPayload(content);
+  if (!payload) {
+    return null;
+  }
+
+  const normalizedEntries = payload.thematique_suggestions
+    .map((entry) => normalizeThematicJsonEntry(entry))
+    .filter(Boolean);
+
+  if (normalizedEntries.length === 0) {
+    return null;
+  }
+
+  return normalizedEntries;
+}
+
+function applyThematicJsonSuggestions(entries) {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return false;
+  }
+
+  const previousSnapshot = snapshotThematics(state.thematics);
+
+  const existingMap = new Map();
+  const usedThemeIds = new Set();
+
+  state.thematics.forEach((theme) => {
+    if (!theme || typeof theme.label !== 'string') {
+      return;
+    }
+    const key = normalizeText(theme.label);
+    if (!key) {
+      return;
+    }
+    if (!existingMap.has(key)) {
+      existingMap.set(key, theme);
+    }
+    if (typeof theme.id === 'string' && theme.id) {
+      usedThemeIds.add(theme.id);
+    }
+  });
+
+  const usedKeys = new Set();
+  const nextThematics = [];
+
+  const ensureUniqueThemeId = (baseId, fallbackIndex) => {
+    let candidate = typeof baseId === 'string' && baseId.trim() ? baseId.trim() : '';
+    if (!candidate) {
+      candidate = `theme-${fallbackIndex}`;
+    }
+
+    let unique = candidate;
+    let suffix = 1;
+    while (usedThemeIds.has(unique)) {
+      unique = `${candidate}-${suffix}`;
+      suffix += 1;
+    }
+    usedThemeIds.add(unique);
+    return unique;
+  };
+
+  entries.forEach((entry, index) => {
+    if (!entry || typeof entry.label !== 'string') {
+      return;
+    }
+
+    const key = normalizeText(entry.label);
+    if (!key) {
+      return;
+    }
+    if (usedKeys.has(key)) {
+      return;
+    }
+
+    const existing = existingMap.get(key) || null;
+    let themeId = existing && typeof existing.id === 'string' && existing.id ? existing.id : null;
+    if (!themeId) {
+      const baseId = typeof entry.id === 'string' && entry.id ? entry.id : computeStableThematicId(entry.label);
+      themeId = ensureUniqueThemeId(baseId, index + 1);
+    } else {
+      usedThemeIds.add(themeId);
+    }
+
+    const existingSubs = existing && Array.isArray(existing.subs) ? existing.subs : [];
+    const subsByKey = new Map();
+    existingSubs.forEach((sub) => {
+      if (!sub || typeof sub.label !== 'string') {
+        return;
+      }
+      const subKey = normalizeText(sub.label);
+      if (!subKey || subsByKey.has(subKey)) {
+        return;
+      }
+      subsByKey.set(subKey, sub);
+    });
+
+    const usedSubIds = new Set();
+    existingSubs.forEach((sub) => {
+      if (sub && typeof sub.id === 'string' && sub.id) {
+        usedSubIds.add(sub.id);
+      }
+    });
+
+    const nextSubs = [];
+
+    entry.subs.forEach((subLabel, subIndex) => {
+      if (typeof subLabel !== 'string') {
+        return;
+      }
+      const trimmed = subLabel.trim();
+      if (!trimmed) {
+        return;
+      }
+
+      const subKey = normalizeText(trimmed);
+      if (!subKey) {
+        return;
+      }
+
+      const existingSub = subsByKey.get(subKey) || null;
+      let subId = existingSub && typeof existingSub.id === 'string' && existingSub.id ? existingSub.id : null;
+      if (!subId) {
+        const baseSubId = `${themeId}-${computeStableThematicId(trimmed) || `sub-${subIndex + 1}`}`;
+        let candidateId = baseSubId;
+        let suffix = 1;
+        while (usedSubIds.has(candidateId)) {
+          candidateId = `${baseSubId}-${suffix}`;
+          suffix += 1;
+        }
+        subId = candidateId;
+      }
+
+      usedSubIds.add(subId);
+      nextSubs.push({
+        id: subId,
+        label: trimmed,
+        checked: existingSub ? !!existingSub.checked : false,
+        custom: existingSub ? !!existingSub.custom : false
+      });
+    });
+
+    existingSubs.forEach((sub) => {
+      if (!sub || typeof sub.label !== 'string') {
+        return;
+      }
+      const subKey = normalizeText(sub.label);
+      if (!subKey) {
+        return;
+      }
+      const hasSuggestion = entry.subs.some((label) => normalizeText(label) === subKey);
+      if (hasSuggestion) {
+        return;
+      }
+      if (!sub.custom && !sub.checked) {
+        return;
+      }
+
+      let subId = typeof sub.id === 'string' && sub.id ? sub.id : null;
+      if (!subId) {
+        const baseSubId = `${themeId}-${computeStableThematicId(sub.label) || 'sub'}`;
+        let candidateId = baseSubId;
+        let suffix = 1;
+        while (usedSubIds.has(candidateId)) {
+          candidateId = `${baseSubId}-${suffix}`;
+          suffix += 1;
+        }
+        subId = candidateId;
+      }
+
+      usedSubIds.add(subId);
+      nextSubs.push({
+        id: subId,
+        label: sub.label,
+        checked: !!sub.checked,
+        custom: !!sub.custom
+      });
+    });
+
+    nextThematics.push({
+      id: themeId,
+      label: entry.label,
+      checked: existing ? !!existing.checked : false,
+      custom: existing ? !!existing.custom : false,
+      subs: nextSubs
+    });
+
+    usedKeys.add(key);
+  });
+
+  state.thematics.forEach((theme) => {
+    if (!theme || typeof theme.label !== 'string') {
+      return;
+    }
+    const key = normalizeText(theme.label);
+    if (!key || usedKeys.has(key)) {
+      return;
+    }
+
+    const hasSelection = !!theme.custom || !!theme.checked || (
+      Array.isArray(theme.subs) && theme.subs.some((sub) => sub && sub.checked)
+    );
+
+    if (hasSelection) {
+      nextThematics.push({
+        ...theme,
+        subs: Array.isArray(theme.subs)
+          ? theme.subs.map((sub) => ({ ...sub }))
+          : []
+      });
+    }
+  });
+
+  const nextSnapshot = snapshotThematics(nextThematics);
+  const changed = previousSnapshot !== nextSnapshot;
+
+  state.thematics = nextThematics;
+
+  return changed;
+}
+
 function computeStableThematicId(label) {
   const normalized = normalizeText(label || '')
     .replace(/[^a-z0-9]+/g, '-')
@@ -1392,11 +1819,9 @@ function handleAssistantState(content) {
 
   if (isCollecteQuestionStep(content, QUESTION_STEPS.THEMES, ['thematiques'])) {
     const jsonSuggestions = extractThematicSuggestionsFromJson(content);
-    let appliedJson = false;
-    if (Array.isArray(jsonSuggestions) && jsonSuggestions.length > 0) {
-      appliedJson = applyJsonThematicSuggestions(jsonSuggestions);
-    }
-    if (!appliedJson) {
+    if (jsonSuggestions) {
+      applyThematicJsonSuggestions(jsonSuggestions);
+    } else {
       const suggestions = extractThematicSuggestions(content);
       applyThematicSuggestions(suggestions);
     }
