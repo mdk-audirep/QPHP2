@@ -498,56 +498,59 @@ function renderThematics() {
     header.appendChild(title);
     card.appendChild(header);
 
-    const list = document.createElement('ul');
-    list.className = 'thematic-sublist';
+    if (state.showSubThemes) {
+      const list = document.createElement('ul');
+      list.className = 'thematic-sublist';
 
-    theme.subs.forEach((sub) => {
-      const item = document.createElement('li');
-      const subCheckbox = document.createElement('input');
-      subCheckbox.type = 'checkbox';
-      subCheckbox.checked = sub.checked;
-      subCheckbox.addEventListener('change', () => {
-        sub.checked = subCheckbox.checked;
+      theme.subs.forEach((sub) => {
+        const item = document.createElement('li');
+        const subCheckbox = document.createElement('input');
+        subCheckbox.type = 'checkbox';
+        subCheckbox.checked = sub.checked;
+        subCheckbox.addEventListener('change', () => {
+          sub.checked = subCheckbox.checked;
+          const targetTheme = state.thematics.find((item) => item.id === theme.id);
+          if (!targetTheme) return;
+          const targetSub = targetTheme.subs.find((entry) => entry.id === sub.id);
+          if (targetSub) {
+            targetSub.checked = subCheckbox.checked;
+          }
+          updateValidateThematicsState();
+        });
+        const label = document.createElement('span');
+        label.textContent = sub.label;
+        item.appendChild(subCheckbox);
+        item.appendChild(label);
+        list.appendChild(item);
+      });
+
+      const addWrapper = document.createElement('div');
+      addWrapper.className = 'add-sub';
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.placeholder = 'Ajouter une sous-thématique';
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = 'Ajouter';
+      button.addEventListener('click', () => {
+        const value = input.value.trim();
+        if (!value) return;
+        const id = 'custom-' + Date.now();
+        const newSub = { id, label: value, checked: true, custom: true };
         const targetTheme = state.thematics.find((item) => item.id === theme.id);
         if (!targetTheme) return;
-        const targetSub = targetTheme.subs.find((entry) => entry.id === sub.id);
-        if (targetSub) {
-          targetSub.checked = subCheckbox.checked;
-        }
+        targetTheme.subs.push(newSub);
+        input.value = '';
+        renderThematics();
         updateValidateThematicsState();
       });
-      const label = document.createElement('span');
-      label.textContent = sub.label;
-      item.appendChild(subCheckbox);
-      item.appendChild(label);
-      list.appendChild(item);
-    });
 
-    const addWrapper = document.createElement('div');
-    addWrapper.className = 'add-sub';
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.placeholder = 'Ajouter une sous-thématique';
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.textContent = 'Ajouter';
-    button.addEventListener('click', () => {
-      const value = input.value.trim();
-      if (!value) return;
-      const id = 'custom-' + Date.now();
-      const newSub = { id, label: value, checked: true, custom: true };
-      const targetTheme = state.thematics.find((item) => item.id === theme.id);
-      if (!targetTheme) return;
-      targetTheme.subs.push(newSub);
-      input.value = '';
-      renderThematics();
-      updateValidateThematicsState();
-    });
+      addWrapper.appendChild(input);
+      addWrapper.appendChild(button);
+      card.appendChild(list);
+      card.appendChild(addWrapper);
+    }
 
-    addWrapper.appendChild(input);
-    addWrapper.appendChild(button);
-    card.appendChild(list);
-    card.appendChild(addWrapper);
     elements.thematicContainer.appendChild(card);
   });
 }
