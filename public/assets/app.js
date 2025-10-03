@@ -134,6 +134,7 @@ function escapeHtml(text) {
 }
 
 function normalizeSources(raw) {
+  const generatedIdPattern = /\\turn\d+file\d+$/i;
   const sanitizeUrl = (value) => {
     if (typeof value !== 'string') {
       return '';
@@ -186,6 +187,10 @@ function normalizeSources(raw) {
           return;
         }
 
+        if (generatedIdPattern.test(normalized)) {
+          return;
+        }
+
         if (isWeb) {
           const matches = normalized.match(/https?:\/\/\S+/g);
           if (matches && matches.length > 0) {
@@ -221,7 +226,10 @@ function normalizeSources(raw) {
         }
 
         if (!label && typeof entry.id === 'string') {
-          label = cleanupLabel(entry.id);
+          const candidate = cleanupLabel(entry.id);
+          if (candidate && !generatedIdPattern.test(entry.id)) {
+            label = candidate;
+          }
         }
 
         if (!label && isWeb && href) {
