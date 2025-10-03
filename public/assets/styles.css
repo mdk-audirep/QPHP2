@@ -309,7 +309,9 @@ body {
     display: flex;
     justify-content: flex-end;
 }
-
+.source-section {
+	display:none;
+}
 .form-actions button {
     background: linear-gradient(135deg, #38bdf8 0%, #0ea5e9 100%);
     border: none;
