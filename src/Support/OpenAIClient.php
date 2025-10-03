@@ -100,10 +100,10 @@ public function send(array $payload, ?callable $onDelta = null): array
                 ]);
 
                 $finalPayload = json_decode((string) $final->getBody(), true);
-				// error_log('[DEBUG file_search_call] ' . json_encode(
-					// $finalPayload['output'][0]['file_search_call'] ?? null,
-					// JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE
-				// ));	
+				 error_log('[DEBUG file_search_call] ' . json_encode(
+					 $finalPayload['output'][0]['file_search_call'] ?? null,
+					 JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE
+				));	
                 if (is_array($finalPayload)) {
                     // 5) On extrait les sources depuis le retrieve final
                     $finalSources = \Questionnaire\Support\ResponseFormatter::extractSources($finalPayload);
@@ -468,8 +468,8 @@ public function send(array $payload, ?callable $onDelta = null): array
                 'prompt_version' => $session['promptVersion']
             ],
             'include' => [
-                'output[*].file_search_call.search_results',
-                'output[*].web_search_call.search_results',
+                'output.file_search_call.search_results',
+                'output.web_search_call.search_results',
             ]
         ];
 
@@ -708,6 +708,7 @@ public function send(array $payload, ?callable $onDelta = null): array
         return $result;
     }
 }
+
 
 
 
