@@ -996,13 +996,76 @@ function syncQuestionStepFromCollecteState() {
   return hasStateChange;
 }
 
+function isPendingQuestionMatch(expectedIds = []) {
+  if (!Array.isArray(expectedIds) || expectedIds.length === 0) {
+    return false;
+  }
+
+  const pendingId = state.collecteState?.pendingQuestion?.id;
+  if (typeof pendingId !== 'string' || !pendingId) {
+    return false;
+  }
+
+  const normalizedPendingId = normalizeText(pendingId);
+  return expectedIds.some((candidate) => {
+    const normalizedCandidate = normalizeText(candidate);
+    if (!normalizedCandidate) {
+      return false;
+    }
+    return (
+      normalizedPendingId === normalizedCandidate ||
+      normalizedPendingId.includes(normalizedCandidate)
+    );
+  });
+}
+
+function isCollecteQuestionStep(content, step, expectedPendingIds = []) {
+  if (isPendingQuestionMatch(expectedPendingIds)) {
+    return true;
+  }
+
+  if (typeof content !== 'string') {
+    return false;
+  }
+
+  const trimmed = content.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  const firstLine = trimmed.split(/\r?\n/, 1)[0] || '';
+  let candidate = firstLine.trim();
+  if (!candidate) {
+    return false;
+  }
+
+  candidate = candidate.replace(/^[#>\s]+/, '');
+  candidate = candidate.replace(/^\*\*\s*/, '');
+  candidate = candidate.replace(/[*_`~]/g, '');
+  candidate = candidate.trim();
+
+  const normalized = normalizeText(candidate);
+  if (!normalized) {
+    return false;
+  }
+
+  const stepString = String(step);
+  const stepPatterns = [
+    new RegExp(`^q\s*${stepString}\b`),
+    new RegExp(`^${stepString}\s*[\-–—]`),
+    new RegExp(`^${stepString}\s*[:.]`)
+  ];
+
+  return stepPatterns.some((pattern) => pattern.test(normalized));
+}
+
 function handleAssistantState(content) {
   const normalizedContent = normalizeText(content);
   const hadPendingQuestion = !!state.collecteState?.pendingQuestion;
 
   let handledStateUpdate = false;
 
-  if (normalizedContent.includes(`question ${QUESTION_STEPS.THEMES}`)) {
+  if (isCollecteQuestionStep(content, QUESTION_STEPS.THEMES, ['thematiques'])) {
     const suggestions = extractThematicSuggestions(content);
     applyThematicSuggestions(suggestions);
     state.collecteState.pendingQuestion = {
@@ -1015,7 +1078,15 @@ function handleAssistantState(content) {
     handledStateUpdate = true;
   }
 
-  if (!handledStateUpdate && normalizedContent.includes(`question ${QUESTION_STEPS.SUBTHEMES}`)) {
+  if (
+    !handledStateUpdate &&
+    isCollecteQuestionStep(content, QUESTION_STEPS.SUBTHEMES, [
+      'sous-thematiques',
+      'sous thematiques',
+      'sousthematiques',
+      FALLBACK_SUBTHEMES_PENDING_ID
+    ])
+  ) {
     const thematicMatch = state.thematics.find((theme) =>
       normalizedContent.includes(normalizeText(theme.label))
     );
