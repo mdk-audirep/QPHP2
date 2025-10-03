@@ -49,60 +49,169 @@ final class OpenAIClient
 
         // return $payload;
     // }
-                public function send(array $payload, ?callable $onDelta = null): array
-                {
-                        $headers = $this->defaultHeaders();
-                        $headers['Content-Type'] = 'application/json';
+public function send(array $payload, ?callable $onDelta = null): array
+{
+    $headers = $this->defaultHeaders();
+    $headers['Content-Type'] = 'application/json';
 
-			try {
-				// (facultatif) log minimal côté requête, sans la clé
-				error_log('[OpenAI request] ' . json_encode([
-					'endpoint' => 'responses',
-					'model'    => $payload['model'] ?? null,
-					'has_tools' => isset($payload['tools']),
-					'has_tool_resources' => isset($payload['tool_resources']),
-					'stream'   => $payload['stream'] ?? null,
-				], JSON_UNESCAPED_UNICODE));
+    try {
+        // (facultatif) log minimal côté requête, sans la clé
+        error_log('[OpenAI request] ' . json_encode([
+            'endpoint'  => 'responses',
+            'model'     => $payload['model'] ?? null,
+            'has_tools' => isset($payload['tools']),
+            'stream'    => $payload['stream'] ?? null,
+        ], JSON_UNESCAPED_UNICODE));
 
-                                $response = $this->client->post('responses', [
-                                        'headers' => $headers,
-                                        // mieux que 'body' : laisse Guzzle encoder et définir content-length
-                                        'json'    => $payload,
-					// ce 'stream' indique à Guzzle de ne pas bufferiser la réponse côté client PHP.
-					// (OK pour SSE ; ta méthode decodeStream() devra lire le flux chunk par chunk)
-					'stream'  => true,
-					'timeout' => 120,
-				]);
+        // 1) Appel Responses en streaming SSE
+        $response = $this->client->post('responses', [
+            'headers' => $headers,
+            'json'    => $payload,
+            // Guzzle: ne pas bufferiser la réponse → ok pour SSE
+            'stream'  => true,
+            'timeout' => 120,
+        ]);
 
-                                $decoded = $this->decodeStream($response->getBody(), $onDelta);
-                                if (!is_array($decoded)) {
-                                        throw new \RuntimeException('Réponse OpenAI illisible');
-                                }
-                                return $this->enrichWithFileMetadata($decoded);
-			}
-			catch (ClientException $e) { // 4xx
-				$body = $e->hasResponse() ? (string) $e->getResponse()->getBody() : '';
-				error_log('[OpenAI 4xx] ' . $body);
-				throw new \RuntimeException(
-					'Appel OpenAI impossible (4xx): ' . ($body ?: $e->getMessage()),
-					$e->getCode(),
-					$e
-				);
-			}
-			catch (ServerException $e) { // 5xx
-				$body = $e->hasResponse() ? (string) $e->getResponse()->getBody() : '';
-				error_log('[OpenAI 5xx] ' . $body);
-				throw new \RuntimeException(
-					'Appel OpenAI impossible (5xx): ' . ($body ?: $e->getMessage()),
-					$e->getCode(),
-					$e
-				);
-			}
-			catch (RequestException $e) { // réseau/timeout/SSL
-				error_log('[OpenAI request error] ' . $e->getMessage());
-				throw new \RuntimeException('Erreur réseau OpenAI: ' . $e->getMessage(), $e->getCode(), $e);
-			}
-		}
+        // 2) Décodage du stream
+        $decoded = $this->decodeStream($response->getBody(), $onDelta);
+        if (!is_array($decoded)) {
+            throw new \RuntimeException('Réponse OpenAI illisible');
+        }
+
+        // 3) Récupère l’ID de la réponse pour un retrieve final avec "include"
+        $responseId = $decoded['response']['id'] ?? ($decoded['id'] ?? null);
+
+        if ($responseId) {
+            // Construit la liste des "include" (on met file_search + web_search, c’est inoffensif si absent)
+            $includes = [
+                'output[*].file_search_call.search_results',
+                'output[*].web_search_call.search_results',
+            ];
+
+            // 4) Retrieve post-stream pour consolider les search_results (file_search/web_search)
+            //    NB: on passe par GET /responses/{id}?include=...
+            try {
+                $final = $this->client->get('responses/' . $responseId, [
+                    'headers' => $headers,
+                    'query'   => [
+                        'include' => implode(',', $includes),
+                    ],
+                    'timeout' => 60,
+                ]);
+
+                $finalPayload = json_decode((string) $final->getBody(), true);
+				// error_log('[DEBUG file_search_call] ' . json_encode(
+					// $finalPayload['output'][0]['file_search_call'] ?? null,
+					// JSON_PRETTY_PRINT|JSON_UNESCAPED_UNICODE
+				// ));	
+                if (is_array($finalPayload)) {
+                    // 5) On extrait les sources depuis le retrieve final
+                    $finalSources = \Questionnaire\Support\ResponseFormatter::extractSources($finalPayload);
+
+                    // 6) Merge des sources finales dans l’objet stream décodé
+                    //    — on évite les doublons avec des clés simples
+                    $decoded['sources'] = $decoded['sources'] ?? ['internal' => [], 'web' => []];
+
+                    // a) INTERNAL
+                    $existingInternal = is_array($decoded['sources']['internal'] ?? null)
+                        ? $decoded['sources']['internal']
+                        : [];
+                    $newInternal = is_array($finalSources['internal'] ?? null)
+                        ? $finalSources['internal']
+                        : [];
+
+                    $decoded['sources']['internal'] = (function(array $a, array $b) {
+                        $seen = [];
+                        $out  = [];
+                        $push = function($item) use (&$seen, &$out) {
+                            // clé = file_id + md5(snippet) (le plus robuste pour dédupliquer)
+                            $key = ($item['file_id'] ?? 'null') . '|' . md5((string)($item['snippet'] ?? ''));
+                            if (!isset($seen[$key])) {
+                                $seen[$key] = true;
+                                $out[] = $item;
+                            }
+                        };
+                        foreach ($a as $it) $push($it);
+                        foreach ($b as $it) $push($it);
+                        return $out;
+                    })($existingInternal, $newInternal);
+
+                    // b) WEB
+                    $existingWeb = is_array($decoded['sources']['web'] ?? null)
+                        ? $decoded['sources']['web']
+                        : [];
+                    $newWeb = is_array($finalSources['web'] ?? null)
+                        ? $finalSources['web']
+                        : [];
+
+                    $decoded['sources']['web'] = (function(array $a, array $b) {
+                        $seen = [];
+                        $out  = [];
+                        $push = function($item) use (&$seen, &$out) {
+                            // clé = title|url si disponibles
+                            $title = isset($item['title']) ? trim((string)$item['title']) : '';
+                            $url   = isset($item['url'])   ? trim((string)$item['url'])   : '';
+                            $key   = $title . '|' . $url;
+                            if ($key === '|') {
+                                // fallback si pas de title/url
+                                $key = md5(json_encode($item));
+                            }
+                            if (!isset($seen[$key])) {
+                                $seen[$key] = true;
+                                $out[] = $item;
+                            }
+                        };
+                        foreach ($a as $it) $push($it);
+                        foreach ($b as $it) $push($it);
+                        return $out;
+                    })($existingWeb, $newWeb);
+                }
+            } catch (\Throwable $e) {
+                // On n’échoue pas si le retrieve ne passe pas (réseau, include invalide, etc.)
+                error_log('[OpenAI retrieve post-stream] ' . $e->getMessage());
+            }
+        }
+
+        // 7) Résolution metadata fichiers (filename depuis file_id) — ta méthode existante
+        $decoded = $this->enrichWithFileMetadata($decoded);
+		// >>> ADD THIS: write the .txt log
+		$sessionId  = $payload['metadata']['session_id'] ?? null;
+		$responseId = $decoded['response']['id'] ?? ($decoded['id'] ?? null);
+		$logPath    = __DIR__ . 'vector_sources.log';
+
+		\Questionnaire\Support\SourceLogger::append(
+			$logPath,
+			$responseId,
+			$sessionId,
+			$decoded['sources'] ?? []
+		);
+
+		return $decoded;		
+    }
+    catch (ClientException $e) { // 4xx
+        $body = $e->hasResponse() ? (string) $e->getResponse()->getBody() : '';
+        error_log('[OpenAI 4xx] ' . $body);
+        throw new \RuntimeException(
+            'Appel OpenAI impossible (4xx): ' . ($body ?: $e->getMessage()),
+            $e->getCode(),
+            $e
+        );
+    }
+    catch (ServerException $e) { // 5xx
+        $body = $e->hasResponse() ? (string) $e->getResponse()->getBody() : '';
+        error_log('[OpenAI 5xx] ' . $body);
+        throw new \RuntimeException(
+            'Appel OpenAI impossible (5xx): ' . ($body ?: $e->getMessage()),
+            $e->getCode(),
+            $e
+        );
+    }
+    catch (RequestException $e) { // réseau/timeout/SSL
+        error_log('[OpenAI request error] ' . $e->getMessage());
+        throw new \RuntimeException('Erreur réseau OpenAI: ' . $e->getMessage(), $e->getCode(), $e);
+    }
+}
+
     private function decodeStream(StreamInterface $stream, ?callable $onDelta): array
     {
         $output = [];
@@ -339,7 +448,7 @@ final class OpenAIClient
 					'type' => 'web_search'
 				]		
 				],
-			    'tool_choice' => 'auto',
+			    'tool_choice' => 'required',
             // 'tools' => [
                 // ['type' => 'file_search'],
                 // ['type' => 'web_search']

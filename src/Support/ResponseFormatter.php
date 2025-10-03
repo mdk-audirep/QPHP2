@@ -12,76 +12,135 @@ final class ResponseFormatter
     /**
      * @return array{markdown: string, sources: array{internal: list<string>, web: list<string>}}
      */
-    public static function formatAssistantResponse(array $response): array
-    {
-        $chunks = self::gatherOutputChunks($response);
-        $markdown = '';
+	public static function formatAssistantResponse(array $response): array
+	{
+		$chunks = self::gatherOutputChunks($response);
+		$markdown = '';
 
-        if ($chunks !== []) {
-            $buffer = '';
-            foreach ($chunks as $chunk) {
-                $buffer .= self::stringifyChunk($chunk);
-            }
+		if ($chunks !== []) {
+			$buffer = '';
+			foreach ($chunks as $chunk) {
+				$buffer .= self::stringifyChunk($chunk);
+			}
+			$markdown = trim($buffer);
+		}
 
-            $markdown = trim($buffer);
-        }
+		// Sources (déjà extraites depuis file_search/web_search par ta logique existante)
+		$sources = self::extractSources($response);
 
-        $sources = self::extractSources($response);
+		// ⬇️ AJOUT 1 : on nettoie les marqueurs internes "filecite … turnXfileY …"
+		$markdown = self::stripInternalFileciteMarkers($markdown);
 
-        return [
-            'markdown' => $markdown,
-            'sources' => $sources,
-        ];
-    }
+		// ⬇️ AJOUT 2 : si le modèle a imprimé ses sections "Sources …",
+		//              on remplace leur contenu par nos listes propres (avec filenames)
+		$markdown = self::injectResolvedSources($markdown, $sources);
+
+		return [
+			'markdown' => $markdown,
+			'sources'  => $sources,
+		];
+	}
 
     /**
      * @return array{internal: list<string>, web: list<string>}
      */
-    public static function extractSources(array $payload): array
-    {
-        $sources = [
-            'internal' => [],
-            'web' => [],
-        ];
+ /**
+ * Extrait des sources depuis la réponse Responses (file_search + web_search),
+ * en gérant plusieurs schémas possibles (file_id/filename imbriqués).
+ *
+ * @param array $response payload Responses (issu du retrieve de préférence)
+ * @return array{internal: array<int,array{filename:?string,file_id:?string,score:?float,snippet:?string}>, web: array<int,array{title:?string,url:?string}>}
+ */
+public static function extractSources(array $response): array
+{
+    $internal = [];
+    $web      = [];
 
-        if (isset($payload['sources'])) {
-            $sources = self::normalizeSources($payload['sources']);
+    $outputs = $response['output'] ?? [];
+    if (!is_array($outputs)) $outputs = [];
+
+    foreach ($outputs as $out) {
+        // ===== FILE SEARCH =====
+        $rslts = [];
+        if (!empty($out['file_search_call']['search_results']) && is_array($out['file_search_call']['search_results'])) {
+            $rslts = $out['file_search_call']['search_results'];
+        } elseif (!empty($out['file_search_call']['results']) && is_array($out['file_search_call']['results'])) {
+            $rslts = $out['file_search_call']['results'];
         }
 
-        [$documents, $urls] = self::collectRawSources($payload);
-        $resolvedFileNames = self::extractResolvedFileNames($payload);
+        foreach ($rslts as $r) {
+            // Essayons différentes “formes” possibles
+            $fileId =
+                ($r['file_id'] ?? null) ??
+                ($r['file']['id'] ?? null) ??
+                ($r['document_id'] ?? null) ??
+                ($r['source']['file_id'] ?? null) ??
+                ($r['vector_store_file_id'] ?? null);
 
-        $placeholderIndex = 1;
+            $filename =
+                ($r['filename'] ?? null) ??
+                ($r['file']['filename'] ?? null) ??
+                ($r['display_name'] ?? null) ??
+                ($r['attributes']['filename'] ?? null) ??
+                ($r['source']['filename'] ?? null);
 
-        foreach ($documents as $documentId => $parts) {
-            $partsWithName = $parts;
-            if (is_string($documentId) && isset($resolvedFileNames[$documentId])) {
-                array_unshift($partsWithName, $resolvedFileNames[$documentId]);
-            }
-
-            $label = self::buildSourceLabel($partsWithName);
-            if ($label === null && is_string($documentId)) {
-                if (self::isGeneratedDocumentId($documentId)) {
-                    $label = self::generateInternalPlaceholderLabel($placeholderIndex);
-                    $placeholderIndex++;
+            // Snippet / extrait
+            $snippet = $r['content'] ?? ($r['text'] ?? ($r['snippet'] ?? null));
+            if (is_array($snippet)) {
+                if (isset($snippet[0]['text'])) {
+                    $snippet = $snippet[0]['text'];
                 } else {
-                    $label = $documentId;
+                    $snippet = json_encode($snippet, JSON_UNESCAPED_UNICODE);
                 }
             }
+            if (is_string($snippet)) $snippet = trim($snippet);
 
-            if ($label !== null) {
-                self::pushUnique($sources['internal'], $label);
+            // Score
+            $score = null;
+            if (isset($r['score']) && is_numeric($r['score'])) {
+                $score = (float)$r['score'];
+            } elseif (isset($r['relevance_score']) && is_numeric($r['relevance_score'])) {
+                $score = (float)$r['relevance_score'];
+            } elseif (isset($r['rank']) && is_numeric($r['rank'])) {
+                // fallback: parfois un rang entier
+                $score = (float)$r['rank'];
             }
+
+            $internal[] = [
+                'filename' => $filename,
+                'file_id'  => $fileId,
+                'score'    => $score,
+                'snippet'  => $snippet,
+            ];
         }
 
-        foreach ($urls as $url => $parts) {
-            $label = self::buildSourceLabel($parts);
-            $display = $label !== null ? self::appendUrlToLabel($label, $url) : $url;
-            self::pushUnique($sources['web'], $display);
+        // ===== WEB SEARCH (si tu l’utilises) =====
+        $wrs = [];
+        if (!empty($out['web_search_call']['search_results']) && is_array($out['web_search_call']['search_results'])) {
+            $wrs = $out['web_search_call']['search_results'];
+        } elseif (!empty($out['web_search_call']['results']) && is_array($out['web_search_call']['results'])) {
+            $wrs = $out['web_search_call']['results'];
         }
-
-        return $sources;
+        foreach ($wrs as $w) {
+            $title = $w['title'] ?? ($w['name'] ?? null);
+            $url   = $w['url']   ?? ($w['link'] ?? null);
+            $web[] = [
+                'title' => is_string($title) ? trim($title) : null,
+                'url'   => is_string($url) ? trim($url) : null,
+            ];
+        }
     }
+
+    // Dédup interne (file_id + snippet)
+    $seen = []; $internalUniq = [];
+    foreach ($internal as $s) {
+        $key = ($s['file_id'] ?? 'null') . '|' . md5((string)($s['snippet'] ?? ''));
+        if (!isset($seen[$key])) { $seen[$key] = true; $internalUniq[] = $s; }
+    }
+
+    return ['internal' => $internalUniq, 'web' => $web];
+}
+
 
     /**
      * @param array<string, mixed> $response
@@ -251,23 +310,18 @@ final class ResponseFormatter
         return '';
     }
 
-    private static function stripInternalFileciteMarkers(string $text): string
-    {
-        if (!preg_match('/∎\s*filecite/iu', $text)) {
-            return $text;
-        }
-
-        $cleaned = preg_replace('/[ \t]*∎\s*filecite[^∎]*∎[ \t]*/iu', ' ', $text);
-        if ($cleaned === null) {
-            $cleaned = $text;
-        }
-
-        $cleaned = preg_replace('/[ \t]+(\r?\n)/', '$1', $cleaned) ?? $cleaned;
-        $cleaned = preg_replace('/ {2,}/', ' ', $cleaned) ?? $cleaned;
-        $cleaned = preg_replace('/^[ \t]+|[ \t]+$/u', '', $cleaned) ?? $cleaned;
-
-        return $cleaned;
-    }
+	private static function stripInternalFileciteMarkers(string $text): string
+	{
+		$patterns = [
+			// Variante historique encadrée
+			'/∎\s*filecite.*?∎/su',
+			// PUA + motif filecite + id "turnXfileY"
+			'/[\p{Co}]*filecite[\p{Co}]*(?:turn\d+file\d+)[\p{Co}]*/u',
+			// Résidu "turnXfileY" isolé
+			'/\bturn\d+file\d+\b/u',
+		];
+		return preg_replace($patterns, '', $text);
+	}
 
     public static function detectPhase(string $markdown, string $fallback): string
     {
@@ -356,82 +410,124 @@ final class ResponseFormatter
     /**
      * @return array{0: array<string, list<string>>, 1: array<string, list<string>>}
      */
-    private static function collectRawSources(array $payload): array
-    {
-        $documents = [];
-        $urls = [];
-        $stack = [$payload];
+/**
+ * Collecte brute des sources depuis le payload Responses (file_search + web_search).
+ * Retourne [$documents, $urls]
+ * - $documents : array<string,array>  // clé = file_id (ou id proche), valeur = morceaux pour construire le label
+ * - $urls      : array<string,array>  // clé = url, valeur = morceaux pour construire le label
+ */
+private static function collectRawSources(array $payload): array
+{
+    $documents = []; // file_id => parts (pour buildSourceLabel)
+    $urls      = []; // url => parts
 
-        while ($stack !== []) {
-            $current = array_pop($stack);
-            if (!is_array($current)) {
-                continue;
+    $outputs = $payload['output'] ?? [];
+    if (!is_array($outputs)) $outputs = [];
+
+    foreach ($outputs as $out) {
+        // ===== FILE SEARCH =====
+        $fs = $out['file_search_call'] ?? null;
+        if (is_array($fs)) {
+            $results = [];
+            if (!empty($fs['search_results']) && is_array($fs['search_results'])) {
+                $results = $fs['search_results'];
+            } elseif (!empty($fs['results']) && is_array($fs['results'])) {
+                $results = $fs['results'];
             }
 
-            foreach (['search_results', 'results'] as $searchKey) {
-                if (!isset($current[$searchKey]) || !is_array($current[$searchKey])) {
+            foreach ($results as $r) {
+                // ID du fichier : essayer plusieurs schémas
+                $fileId =
+                    ($r['file_id'] ?? null) ??
+                    ($r['file']['id'] ?? null) ??
+                    ($r['document_id'] ?? null) ??
+                    ($r['source']['file_id'] ?? null) ??
+                    ($r['vector_store_file_id'] ?? null);
+
+                if (!$fileId || !is_string($fileId)) {
+                    // si on n'a vraiment rien, on skip (sinon on ne saura pas résoudre le nom ensuite)
                     continue;
                 }
 
-                foreach ($current[$searchKey] as $result) {
-                    if (!is_array($result)) {
-                        continue;
-                    }
+                // Filename si déjà présent dans le résultat
+                $filename =
+                    ($r['filename'] ?? null) ??
+                    ($r['file']['filename'] ?? null) ??
+                    ($r['display_name'] ?? null) ??
+                    ($r['attributes']['filename'] ?? null) ??
+                    ($r['source']['filename'] ?? null);
 
-                    $summary = self::summarizeSearchResult($result);
-
-                    if ($summary['documentId'] !== null) {
-                        $documents[$summary['documentId']] = self::mergeSourceParts(
-                            $documents[$summary['documentId']] ?? [],
-                            $summary['parts']
-                        );
-                    }
-
-                    if ($summary['url'] !== null) {
-                        $urls[$summary['url']] = self::mergeSourceParts(
-                            $urls[$summary['url']] ?? [],
-                            $summary['parts']
-                        );
-                    }
-
-                    $stack[] = $result;
+                // Snippet (pour dédup + label)
+                $snippet = $r['content'] ?? ($r['text'] ?? ($r['snippet'] ?? null));
+                if (is_array($snippet)) {
+                    $snippet = isset($snippet[0]['text']) ? $snippet[0]['text'] : json_encode($snippet, JSON_UNESCAPED_UNICODE);
                 }
-            }
+                if (is_string($snippet)) $snippet = trim($snippet);
 
-            $documentId = self::sanitizeSourceId($current['document_id'] ?? null);
-            if ($documentId !== null && !array_key_exists($documentId, $documents)) {
-                $documents[$documentId] = [];
-            }
-
-            $fileId = self::sanitizeSourceId($current['file_id'] ?? null);
-            if ($fileId !== null && !array_key_exists($fileId, $documents)) {
-                $documents[$fileId] = [];
-            }
-
-            $url = self::sanitizeUrl($current['url'] ?? null);
-            if ($url !== null && !array_key_exists($url, $urls)) {
-                $urls[$url] = [];
-            }
-
-            if (isset($current['annotations']) && is_array($current['annotations'])) {
-                foreach ($current['annotations'] as $annotation) {
-                    $stack[] = $annotation;
-                }
-            }
-
-            foreach ($current as $key => $value) {
-                if ($key === 'sources') {
-                    continue;
+                // Score / rang
+                $score = null;
+                if (isset($r['score']) && is_numeric($r['score'])) {
+                    $score = (float)$r['score'];
+                } elseif (isset($r['relevance_score']) && is_numeric($r['relevance_score'])) {
+                    $score = (float)$r['relevance_score'];
+                } elseif (isset($r['rank']) && is_numeric($r['rank'])) {
+                    $score = (float)$r['rank'];
                 }
 
-                if (is_array($value)) {
-                    $stack[] = $value;
+                // Parts pour buildSourceLabel : on place filename si dispo en tête
+                $parts = [];
+                if ($filename) $parts[] = $filename;
+                if ($snippet)  $parts[] = $snippet;
+                if ($score !== null) $parts[] = 'score:' . $score;
+
+                // Agrégation par fileId
+                if (!isset($documents[$fileId])) {
+                    $documents[$fileId] = $parts;
+                } else {
+                    // merge simple, sans doublon
+                    foreach ($parts as $p) {
+                        if ($p !== null && !in_array($p, $documents[$fileId], true)) {
+                            $documents[$fileId][] = $p;
+                        }
+                    }
                 }
             }
         }
 
-        return [$documents, $urls];
+        // ===== WEB SEARCH =====
+        $ws = $out['web_search_call'] ?? null;
+        if (is_array($ws)) {
+            $wresults = [];
+            if (!empty($ws['search_results']) && is_array($ws['search_results'])) {
+                $wresults = $ws['search_results'];
+            } elseif (!empty($ws['results']) && is_array($ws['results'])) {
+                $wresults = $ws['results'];
+            }
+
+            foreach ($wresults as $w) {
+                $title = $w['title'] ?? ($w['name'] ?? null);
+                $url   = $w['url']   ?? ($w['link'] ?? null);
+                if (!$url || !is_string($url)) continue;
+
+                $parts = [];
+                if ($title) $parts[] = $title;
+
+                if (!isset($urls[$url])) {
+                    $urls[$url] = $parts;
+                } else {
+                    foreach ($parts as $p) {
+                        if ($p !== null && !in_array($p, $urls[$url], true)) {
+                            $urls[$url][] = $p;
+                        }
+                    }
+                }
+            }
+        }
     }
+
+    return [$documents, $urls];
+}
+
 
     /**
      * @return array<string, string>
@@ -667,4 +763,77 @@ final class ResponseFormatter
 
         return filter_var($trimmed, FILTER_VALIDATE_URL) ? $trimmed : null;
     }
+	private static function injectResolvedSources(string $markdown, array $sources): string
+	{
+		// Normalise la structure attendue
+		$internal = [];
+		$web      = [];
+
+		if (isset($sources['internal']) && is_array($sources['internal'])) {
+			$internal = $sources['internal'];
+		} elseif (isset($sources[0]) && is_array($sources[0])) {
+			// compat : si la liste est plate
+			$internal = $sources;
+		}
+		if (isset($sources['web']) && is_array($sources['web'])) {
+			$web = $sources['web'];
+		}
+
+		// Construit les listes formatées
+		$internalLines = [];
+		foreach ($internal as $s) {
+			// on affiche en priorité le filename résolu, sinon le file_id
+			$name = $s['filename'] ?? ($s['file_id'] ?? null);
+			if (!$name) continue;
+			$internalLines[] = '- ' . $name;
+		}
+		if (!$internalLines) {
+			$internalLines[] = 'Aucune';
+		}
+
+		$webLines = [];
+		foreach ($web as $w) {
+			// adapte si ton extracteur utilise d'autres clés ('title', 'url', etc.)
+			$label = $w['title'] ?? ($w['url'] ?? null);
+			if (!$label) continue;
+			$webLines[] = '- ' . $label;
+		}
+		if (!$webLines) {
+			$webLines[] = 'Aucune recherche web effectuée';
+		}
+
+		// Remplacement ciblé des blocs si présents
+		$markdown = self::replaceSourcesBlock($markdown, 'Sources internes utilisées', $internalLines);
+		$markdown = self::replaceSourcesBlock($markdown, 'Sources web utilisées',      $webLines);
+
+		return $markdown;
+	}
+
+
+	/**
+	 * Remplace le contenu d’un bloc commençant par un titre "label"
+	 * jusqu’au prochain titre (##, ###, ou une autre section "Sources …") ou fin de document.
+	 */
+/**
+ * Remplace le contenu d’un bloc commençant par un titre "label"
+ * jusqu’au prochain titre (##, ###, ou une autre section "Sources …") ou fin de document.
+ */
+	private static function replaceSourcesBlock(string $markdown, string $label, array $lines): string
+	{
+		if (stripos($markdown, $label) === false) {
+			return $markdown;
+		}
+
+		// Regex multi-lignes, non-gourmande : capture après "label" jusqu'au prochain titre ou fin
+		$pattern = '/(^|\R)([ \t>*_-]*' . preg_quote($label, '/') . '\s*:?)(.*?)(?=(\R\s*#{1,6}\s|\R\s*[ \t>*_-]*Sources\s+(?:internes|web)\s+utilisées\s*:|\z))/isu';
+
+		return preg_replace_callback($pattern, function ($m) use ($label, $lines) {
+			$prefix  = $m[1] ?? '';
+			$heading = $m[2] ?? $label;
+			$list    = implode("\n", $lines);
+			// Réécrit proprement le bloc : titre + liste
+			return $prefix . $heading . "\n" . $list . "\n";
+		}, $markdown, 1);
+	}
+
 }
