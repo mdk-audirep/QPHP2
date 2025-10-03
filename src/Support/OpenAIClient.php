@@ -436,7 +436,7 @@ public function send(array $payload, ?callable $onDelta = null): array
 
         $payload = [
             'model' => 'gpt-5-mini',
-            'reasoning' => ['effort' => 'medium'],
+            'reasoning' => ['effort' => 'high'],
             'stream' => true,
             'parallel_tool_calls' => true,
 			'tools' => [
@@ -448,7 +448,7 @@ public function send(array $payload, ?callable $onDelta = null): array
 					'type' => 'web_search'
 				]		
 				],
-			    'tool_choice' => 'required',
+			    'tool_choice' => 'auto',
             // 'tools' => [
                 // ['type' => 'file_search'],
                 // ['type' => 'web_search']
@@ -708,6 +708,7 @@ public function send(array $payload, ?callable $onDelta = null): array
         return $result;
     }
 }
+
 
 
 
