@@ -78,95 +78,59 @@ function hasAnyThematicSelection() {
   return state.thematics.some((theme) => theme.checked || theme.subs.some((sub) => sub.checked));
 }
 
-  sanitizedEntries.forEach((entry) => {
-    const key = normalizeText(entry.label);
-    const existing = key ? existingMap.get(key) : null;
-
-    const baseThemeId = existing?.id || computeStableThematicId(entry.label);
-    const themeId = ensureUniqueId(baseThemeId, 'theme');
-
-    const subs = [];
-    const existingSubMap = new Map();
-    if (existing && Array.isArray(existing.subs)) {
-      existing.subs.forEach((sub) => {
-        if (!sub || typeof sub.label !== 'string') {
-          return;
-        }
-        const subKey = normalizeText(sub.label);
-        if (!subKey || existingSubMap.has(subKey)) {
-          return;
-        }
-        existingSubMap.set(subKey, sub);
-      });
-    }
-
-    const normalizedSubs = Array.isArray(entry.subs) ? entry.subs : [];
-
-    normalizedSubs.forEach((subLabel) => {
-      const subKey = normalizeText(subLabel);
-      const existingSub = subKey ? existingSubMap.get(subKey) : null;
-      const baseSubId = existingSub?.id || `${themeId}-${computeStableThematicId(subLabel)}`;
-      const subId = ensureUniqueId(baseSubId, `${themeId}-sub`);
-      subs.push({
-        id: subId,
-        label: subLabel,
-        checked: existingSub?.checked ?? true,
-        custom: existingSub?.custom ?? false
-      });
-    });
-
-    matchedKeys.add(key);
-    nextThematics.push({
-      id: themeId,
-      label: entry.label,
-      checked: existing?.checked ?? true,
-      custom: existing?.custom ?? false,
-      subs
-    });
-  });
-
-  state.thematics.forEach((theme) => {
+function countSelectedThematicEntries() {
+  return state.thematics.reduce((total, theme) => {
     if (!theme) {
-      return;
+      return total;
     }
-    const key = typeof theme.label === 'string' ? normalizeText(theme.label) : '';
-    if (key && matchedKeys.has(key)) {
-      return;
-    }
-    const hasSelection = !!theme.checked || (Array.isArray(theme.subs) && theme.subs.some((sub) => sub && sub.checked));
-    if (!theme.custom && !hasSelection) {
-      return;
-    }
-    const themeId = ensureUniqueId(theme.id || computeStableThematicId(theme.label), 'theme');
-    const subs = Array.isArray(theme.subs)
-      ? theme.subs.map((sub) => {
-          if (!sub) {
-            return null;
-          }
-          const subId = ensureUniqueId(sub.id || `${themeId}-${computeStableThematicId(sub.label)}`, `${themeId}-sub`);
-          return {
-            id: subId,
-            label: sub.label,
-            checked: !!sub.checked,
-            custom: !!sub.custom
-          };
-        }).filter(Boolean)
-      : [];
-    nextThematics.push({
-      id: themeId,
-      label: theme.label,
-      checked: !!theme.checked,
-      custom: !!theme.custom,
-      subs
-    });
-  });
 
-  const previousJson = JSON.stringify(state.thematics);
-  const nextJson = JSON.stringify(nextThematics);
-  const changed = previousJson !== nextJson;
+    let count = total;
+    if (theme.checked) {
+      count += 1;
+    }
 
-  state.thematics = nextThematics;
-  return changed;
+    if (Array.isArray(theme.subs)) {
+      theme.subs.forEach((sub) => {
+        if (sub && sub.checked) {
+          count += 1;
+        }
+      });
+    }
+
+    return count;
+  }, 0);
+}
+
+function updateValidateThematicsState() {
+  const button = elements.validateThematicsButton;
+  if (!button) {
+    return;
+  }
+
+  if (!button.dataset.baseLabel) {
+    const initialLabel = button.textContent ? button.textContent.trim() : '';
+    button.dataset.baseLabel = initialLabel || 'Valider les thématiques';
+  }
+
+  const baseLabel = button.dataset.baseLabel;
+  const visible = state.showThemes || state.showSubThemes;
+  const selectedCount = countSelectedThematicEntries();
+  const hasSelection = selectedCount > 0;
+
+  button.hidden = !visible;
+  button.disabled = !visible || !hasSelection;
+
+  if (!visible) {
+    if (button.textContent !== baseLabel) {
+      button.textContent = baseLabel;
+    }
+    return;
+  }
+
+  const nextLabel = hasSelection ? `${baseLabel} (${selectedCount})` : baseLabel;
+  if (button.textContent !== nextLabel) {
+    button.textContent = nextLabel;
+  }
 }
 
 function normalizeSources(raw) {
