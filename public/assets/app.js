@@ -74,6 +74,14 @@ const elements = {
 
 let assistantJsonBlockCounter = 0;
 
+function normalizeText(value) {
+  return value
+    .toString()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
 function hasAnyThematicSelection() {
   return state.thematics.some((theme) => theme.checked || theme.subs.some((sub) => sub.checked));
 }
