@@ -78,6 +78,61 @@ function hasAnyThematicSelection() {
   return state.thematics.some((theme) => theme.checked || theme.subs.some((sub) => sub.checked));
 }
 
+function countSelectedThematicEntries() {
+  return state.thematics.reduce((total, theme) => {
+    if (!theme) {
+      return total;
+    }
+
+    let count = total;
+    if (theme.checked) {
+      count += 1;
+    }
+
+    if (Array.isArray(theme.subs)) {
+      theme.subs.forEach((sub) => {
+        if (sub && sub.checked) {
+          count += 1;
+        }
+      });
+    }
+
+    return count;
+  }, 0);
+}
+
+function updateValidateThematicsState() {
+  const button = elements.validateThematicsButton;
+  if (!button) {
+    return;
+  }
+
+  if (!button.dataset.baseLabel) {
+    const initialLabel = button.textContent ? button.textContent.trim() : '';
+    button.dataset.baseLabel = initialLabel || 'Valider les thématiques';
+  }
+
+  const baseLabel = button.dataset.baseLabel;
+  const visible = state.showThemes || state.showSubThemes;
+  const selectedCount = countSelectedThematicEntries();
+  const hasSelection = selectedCount > 0;
+
+  button.hidden = !visible;
+  button.disabled = !visible || !hasSelection;
+
+  if (!visible) {
+    if (button.textContent !== baseLabel) {
+      button.textContent = baseLabel;
+    }
+    return;
+  }
+
+  const nextLabel = hasSelection ? `${baseLabel} (${selectedCount})` : baseLabel;
+  if (button.textContent !== nextLabel) {
+    button.textContent = nextLabel;
+  }
+}
+
 function normalizeSources(raw) {
   const generatedIdPattern = /\\turn\d+file\d+$/i;
   const sanitizeUrl = (value) => {
