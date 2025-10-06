@@ -1922,80 +1922,705 @@ function normalizeSources(raw) {
   };
 }
 
-function renderMarkdown(markdown) {
-  const raw = marked.parse(markdown, { mangle: false, headerIds: false });
-  const sanitized = DOMPurify.sanitize(raw, { ADD_ATTR: ['target'] });
-  const wrapper = document.createElement('div');
-  wrapper.innerHTML = sanitized;
+function escapeHtml(text) {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
 
-  const normalizeWhitespace = (value) => value.replace(/\s+/g, ' ').trim();
-  const normalizeForSource = (value) => {
-    const leadingTrimmed = normalizeWhitespace(value).replace(
-      /^(?:[|∣•·▪◦●○‣⁃*\-–—]+\s*)+/u,
-      ''
-    );
-    const trimmed = leadingTrimmed.replace(/[:\s]+$/u, '');
-    return normalizeText(trimmed);
-  };
-  const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const markClosestBlock = (element, className) => {
-    const target = element.closest('p, h1, h2, h3, h4, h5, h6') || element;
-    target.classList.add(className);
-    return target;
-  };
+function cloneThematicList(list) {
+  if (!Array.isArray(list)) {
+    return [];
+  }
 
-  const sourceLabels = ['Sources internes utilisées', 'Sources web utilisées'];
-  const questionHeadingLabels = [
-    'Entreprise',
-    'Cible',
-    "Échantillon",
-    'Nombre de questions souhaitées',
-    'Mode',
-    'Contexte',
-    'Thématiques',
-    'Sensibilités',
-    'Introduction',
-    'Sous-thématiques'
-  ].map((label) => normalizeText(label));
-  const questionHeadingDeterminerPatterns = [
-    /^l['’]\s*/,
-    /^les\s+/, 
-    /^la\s+/, 
-    /^le\s+/, 
-    /^une\s+/, 
-    /^un\s+/, 
-    /^des\s+/, 
-    /^du\s+/, 
-    /^de\s+la\s+/, 
-    /^de\s+l['’]\s*/, 
-    /^d['’]\s*/
-  ];
-  const stripQuestionHeadingDeterminer = (value) => {
-    let result = value;
-    for (const pattern of questionHeadingDeterminerPatterns) {
-      if (pattern.test(result)) {
-        result = result.replace(pattern, '');
-        break;
-      }
-    }
-    return result.trimStart();
-  };
-  const looksLikeQuestionText = (value) => /(?:\?|…|\.\.\.)\s*$/.test(value.trim());
-  const questionHeadingPattern = /^(?:(?:Q\.?|Question)\s*)?(\d+)\s*[-–—]\s*(.+)$/i;
-  let hasSourceSection = false;
-  wrapper.querySelectorAll('*').forEach((node) => {
-    if (!node.textContent) {
+  return list.map((theme) => ({
+    ...theme,
+    subs: Array.isArray(theme.subs)
+      ? theme.subs.map((sub) => ({ ...sub }))
+      : []
+  }));
+}
+
+function computeStableThematicId(label) {
+  const normalized = normalizeText(label || '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+  if (normalized) {
+    return normalized;
+  }
+
+  return `theme-${Date.now()}`;
+}
+
+function extractThematicSuggestions(markdown) {
+  if (typeof markdown !== 'string' || !markdown.trim()) {
+    return [];
+  }
+
+  const lines = markdown.split(/\r?\n/);
+  const seen = new Set();
+  const suggestions = [];
+
+  lines.forEach((rawLine) => {
+    const line = rawLine.trim();
+    if (!line) {
       return;
     }
 
-    if (node.classList && typeof node.classList.contains === 'function' && node.classList.contains('source-section')) {
-      hasSourceSection = true;
+    const match = line.match(/^([-*+]\s+|\d+[.)\s]+)(.*)$/);
+    if (!match) {
+      return;
     }
-    const whitespaceText = normalizeWhitespace(node.textContent);
 
-    const normalizedText = normalizeForSource(node.textContent);
-    const matchesSourceLabel = sourceLabels.some((label) => {
-      const normalizedLabel = normalizeForSource(label);
+    let candidate = match[2] || '';
+    candidate = candidate.replace(/^[\-*+\d.\)\s]+/, '').trim();
+    if (!candidate) {
+      return;
+    }
+
+    const colonIndex = candidate.indexOf(':');
+    const parenIndex = candidate.indexOf('(');
+    let cutoff = candidate.length;
+    if (colonIndex !== -1) {
+      cutoff = Math.min(cutoff, colonIndex);
+    }
+    if (parenIndex !== -1) {
+      cutoff = Math.min(cutoff, parenIndex);
+    }
+
+    candidate = candidate.slice(0, cutoff).trim();
+    candidate = candidate.replace(/[*_`]/g, '').trim();
+    candidate = candidate.replace(/\s*[–—-]\s*$/u, '').trim();
+
+    if (!candidate) {
+      return;
+    }
+
+    const normalized = normalizeText(candidate);
+    if (!normalized || seen.has(normalized)) {
+      return;
+    }
+
+    seen.add(normalized);
+    suggestions.push(candidate);
+  });
+
+  return suggestions;
+}
+
+function extractThematicSuggestionsFromJson(content) {
+  if (typeof content !== 'string' || !content.trim()) {
+    return null;
+  }
+
+  const attemptParse = (raw) => {
+    if (typeof raw !== 'string') {
+      return null;
+    }
+
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    let parsed;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch (error) {
+      return null;
+    }
+
+    if (!parsed || typeof parsed !== 'object') {
+      return null;
+    }
+
+    const list = Array.isArray(parsed.thematique_suggestions)
+      ? parsed.thematique_suggestions
+      : [];
+
+    if (list.length === 0) {
+      return null;
+    }
+
+    const seenLabels = new Set();
+    const normalizedSuggestions = [];
+
+    list.forEach((item) => {
+      let rawLabel = '';
+      let rawSubs = [];
+
+      if (typeof item === 'string') {
+        rawLabel = item.trim();
+      } else if (item && typeof item === 'object') {
+        if (typeof item.label === 'string' && item.label.trim()) {
+          rawLabel = item.label.trim();
+        } else if (typeof item.theme === 'string' && item.theme.trim()) {
+          rawLabel = item.theme.trim();
+        } else if (typeof item.thematique === 'string' && item.thematique.trim()) {
+          rawLabel = item.thematique.trim();
+        } else if (typeof item.libelle === 'string' && item.libelle.trim()) {
+          rawLabel = item.libelle.trim();
+        } else if (typeof item.name === 'string' && item.name.trim()) {
+          rawLabel = item.name.trim();
+        }
+
+        if (Array.isArray(item.sous_thematiques)) {
+          rawSubs = item.sous_thematiques;
+        } else if (Array.isArray(item.sousThematiques)) {
+          rawSubs = item.sousThematiques;
+        } else if (Array.isArray(item.sub_themes)) {
+          rawSubs = item.sub_themes;
+        } else if (Array.isArray(item.subThemes)) {
+          rawSubs = item.subThemes;
+        } else if (Array.isArray(item.subs)) {
+          rawSubs = item.subs;
+        }
+      }
+
+      if (!rawLabel) {
+        return;
+      }
+
+      const normalizedLabel = normalizeText(rawLabel);
+      if (!normalizedLabel || seenLabels.has(normalizedLabel)) {
+        return;
+      }
+
+      const seenSubs = new Set();
+      const subs = [];
+
+      rawSubs.forEach((subItem) => {
+        let subLabel = '';
+        if (typeof subItem === 'string') {
+          subLabel = subItem.trim();
+        } else if (subItem && typeof subItem === 'object') {
+          if (typeof subItem.label === 'string' && subItem.label.trim()) {
+            subLabel = subItem.label.trim();
+          } else if (typeof subItem.libelle === 'string' && subItem.libelle.trim()) {
+            subLabel = subItem.libelle.trim();
+          } else if (typeof subItem.name === 'string' && subItem.name.trim()) {
+            subLabel = subItem.name.trim();
+          }
+        }
+
+        if (!subLabel) {
+          return;
+        }
+
+        const normalizedSub = normalizeText(subLabel);
+        if (!normalizedSub || seenSubs.has(normalizedSub)) {
+          return;
+        }
+
+        seenSubs.add(normalizedSub);
+        subs.push(subLabel);
+      });
+
+      seenLabels.add(normalizedLabel);
+      normalizedSuggestions.push({ label: rawLabel, subs });
+    });
+
+    if (normalizedSuggestions.length === 0) {
+      return null;
+    }
+
+    return normalizedSuggestions;
+  };
+
+  const codeBlockPattern = /```[ \t]*([a-z0-9_-]+)?\s*([\s\S]*?)```/gi;
+  let codeMatch = codeBlockPattern.exec(content);
+  while (codeMatch) {
+    const lang = typeof codeMatch[1] === 'string' ? codeMatch[1].toLowerCase() : '';
+    if (!lang || lang === 'json' || lang === 'jsonc') {
+      const parsed = attemptParse(codeMatch[2]);
+      if (parsed) {
+        return parsed;
+      }
+    }
+    codeMatch = codeBlockPattern.exec(content);
+  }
+
+  const lowerContent = content.toLowerCase();
+  const marker = 'thematique_suggestions';
+  let markerIndex = lowerContent.indexOf(marker);
+
+  while (markerIndex !== -1) {
+    let start = markerIndex;
+    while (start >= 0 && content[start] !== '{') {
+      start -= 1;
+    }
+
+    if (start >= 0) {
+      let depth = 0;
+      for (let position = start; position < content.length; position += 1) {
+        const char = content[position];
+        if (char === '{') {
+          depth += 1;
+        } else if (char === '}') {
+          depth -= 1;
+          if (depth === 0) {
+            const snippet = content.slice(start, position + 1);
+            const parsed = attemptParse(snippet);
+            if (parsed) {
+              return parsed;
+            }
+            break;
+          }
+        }
+      }
+    }
+
+    markerIndex = lowerContent.indexOf(marker, markerIndex + marker.length);
+  }
+
+  return null;
+}
+
+function applyThematicSuggestions(suggestions) {
+  const labels = Array.isArray(suggestions)
+    ? suggestions.map((label) => (typeof label === 'string' ? label.trim() : ''))
+    : [];
+
+  const filteredLabels = labels.filter(Boolean);
+
+  if (filteredLabels.length === 0) {
+    if (state.thematics.length === 0) {
+      state.thematics = cloneThematicList(DEFAULT_THEMATICS_BLUEPRINT);
+      return true;
+    }
+    return false;
+  }
+
+  const existingMap = new Map();
+  const usedIds = new Set();
+
+  state.thematics.forEach((theme) => {
+    if (!theme || typeof theme.label !== 'string') {
+      return;
+    }
+    const key = normalizeText(theme.label);
+    if (!key) {
+      return;
+    }
+    if (!existingMap.has(key)) {
+      existingMap.set(key, theme);
+    }
+    if (theme.id) {
+      usedIds.add(theme.id);
+    }
+  });
+
+  const usedKeys = new Set();
+  let changed = false;
+  const nextThematics = [];
+
+  const ensureUniqueId = (baseId) => {
+    let candidate = baseId && baseId.trim() ? baseId.trim() : 'theme';
+    let uniqueId = candidate;
+    let suffix = 1;
+    while (usedIds.has(uniqueId)) {
+      uniqueId = `${candidate}-${suffix++}`;
+    }
+    usedIds.add(uniqueId);
+    return uniqueId;
+  };
+
+  filteredLabels.forEach((label) => {
+    const key = normalizeText(label);
+    if (!key) {
+      return;
+    }
+
+    const existing = existingMap.get(key) || null;
+    if (existing) {
+      usedKeys.add(key);
+      nextThematics.push({
+        ...existing,
+        label,
+        subs: Array.isArray(existing.subs)
+          ? existing.subs.map((sub) => ({ ...sub }))
+          : []
+      });
+      if (existing.label !== label) {
+        changed = true;
+      }
+      return;
+    }
+
+    const baseId = computeStableThematicId(label);
+    const id = ensureUniqueId(baseId);
+    nextThematics.push({
+      id,
+      label,
+      checked: false,
+      custom: false,
+      subs: []
+    });
+    usedKeys.add(key);
+    changed = true;
+  });
+
+  state.thematics.forEach((theme) => {
+    if (!theme) {
+      return;
+    }
+    const key = typeof theme.label === 'string' ? normalizeText(theme.label) : '';
+    if (key && usedKeys.has(key)) {
+      return;
+    }
+    const hasSelection = !!theme.checked || (Array.isArray(theme.subs) && theme.subs.some((sub) => sub && sub.checked));
+    if (theme.custom || hasSelection) {
+      if (theme.id) {
+        usedIds.add(theme.id);
+      }
+      nextThematics.push({
+        ...theme,
+        subs: Array.isArray(theme.subs)
+          ? theme.subs.map((sub) => ({ ...sub }))
+          : []
+      });
+    }
+  });
+
+  if (nextThematics.length !== state.thematics.length) {
+    changed = true;
+  } else {
+    for (let index = 0; index < nextThematics.length; index += 1) {
+      if (nextThematics[index].id !== state.thematics[index].id) {
+        changed = true;
+        break;
+      }
+      if (nextThematics[index].checked !== state.thematics[index].checked) {
+        changed = true;
+        break;
+      }
+    }
+  }
+
+  state.thematics = nextThematics;
+  return changed;
+}
+
+function applyJsonThematicSuggestions(entries) {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return false;
+  }
+
+  const sanitizedEntries = [];
+  const seenLabels = new Set();
+
+  entries.forEach((entry) => {
+    if (!entry || typeof entry !== 'object') {
+      return;
+    }
+
+    const label = typeof entry.label === 'string' ? entry.label.trim() : '';
+    if (!label) {
+      return;
+    }
+
+    const normalizedLabel = normalizeText(label);
+    if (!normalizedLabel || seenLabels.has(normalizedLabel)) {
+      return;
+    }
+
+    const rawSubs = Array.isArray(entry.subs)
+      ? entry.subs
+      : Array.isArray(entry.sous_thematiques)
+      ? entry.sous_thematiques
+      : [];
+
+    const subs = [];
+    const seenSubs = new Set();
+
+    rawSubs.forEach((subItem) => {
+      let subLabel = '';
+      if (typeof subItem === 'string') {
+        subLabel = subItem.trim();
+      } else if (subItem && typeof subItem === 'object' && typeof subItem.label === 'string') {
+        subLabel = subItem.label.trim();
+      }
+
+      if (!subLabel) {
+        return;
+      }
+
+      const normalizedSub = normalizeText(subLabel);
+      if (!normalizedSub || seenSubs.has(normalizedSub)) {
+        return;
+      }
+
+      seenSubs.add(normalizedSub);
+      subs.push(subLabel);
+    });
+
+    seenLabels.add(normalizedLabel);
+    sanitizedEntries.push({ label, subs });
+  });
+
+  if (sanitizedEntries.length === 0) {
+    return false;
+  }
+
+  const existingMap = new Map();
+  state.thematics.forEach((theme) => {
+    if (!theme || typeof theme.label !== 'string') {
+      return;
+    }
+    const key = normalizeText(theme.label);
+    if (!key || existingMap.has(key)) {
+      return;
+    }
+    existingMap.set(key, theme);
+  });
+
+  const usedIds = new Set();
+  const ensureUniqueId = (candidate, fallback) => {
+    let base = typeof candidate === 'string' ? candidate.trim() : '';
+    if (!base) {
+      base = typeof fallback === 'string' ? fallback.trim() : '';
+    }
+    if (!base) {
+      base = `id-${Date.now()}`;
+    }
+    let result = base;
+    let suffix = 1;
+    while (usedIds.has(result)) {
+      result = `${base}-${suffix++}`;
+    }
+    usedIds.add(result);
+    return result;
+  };
+
+  const matchedKeys = new Set();
+  const nextThematics = [];
+
+  sanitizedEntries.forEach((entry) => {
+    const key = normalizeText(entry.label);
+    const existing = key ? existingMap.get(key) : null;
+
+    const baseThemeId = existing?.id || computeStableThematicId(entry.label);
+    const themeId = ensureUniqueId(baseThemeId, 'theme');
+
+    const subs = [];
+    const existingSubMap = new Map();
+    if (existing && Array.isArray(existing.subs)) {
+      existing.subs.forEach((sub) => {
+        if (!sub || typeof sub.label !== 'string') {
+          return;
+        }
+        const subKey = normalizeText(sub.label);
+        if (!subKey || existingSubMap.has(subKey)) {
+          return;
+        }
+        existingSubMap.set(subKey, sub);
+      });
+    }
+
+    const normalizedSubs = Array.isArray(entry.subs) ? entry.subs : [];
+
+    normalizedSubs.forEach((subLabel) => {
+      const subKey = normalizeText(subLabel);
+      const existingSub = subKey ? existingSubMap.get(subKey) : null;
+      const baseSubId = existingSub?.id || `${themeId}-${computeStableThematicId(subLabel)}`;
+      const subId = ensureUniqueId(baseSubId, `${themeId}-sub`);
+      subs.push({
+        id: subId,
+        label: subLabel,
+        checked: existingSub?.checked ?? true,
+        custom: existingSub?.custom ?? false
+      });
+    });
+
+    matchedKeys.add(key);
+    nextThematics.push({
+      id: themeId,
+      label: entry.label,
+      checked: existing?.checked ?? true,
+      custom: existing?.custom ?? false,
+      subs
+    });
+  });
+
+  state.thematics.forEach((theme) => {
+    if (!theme) {
+      return;
+    }
+    const key = typeof theme.label === 'string' ? normalizeText(theme.label) : '';
+    if (key && matchedKeys.has(key)) {
+      return;
+    }
+    const hasSelection = !!theme.checked || (Array.isArray(theme.subs) && theme.subs.some((sub) => sub && sub.checked));
+    if (!theme.custom && !hasSelection) {
+      return;
+    }
+    const themeId = ensureUniqueId(theme.id || computeStableThematicId(theme.label), 'theme');
+    const subs = Array.isArray(theme.subs)
+      ? theme.subs.map((sub) => {
+          if (!sub) {
+            return null;
+          }
+          const subId = ensureUniqueId(sub.id || `${themeId}-${computeStableThematicId(sub.label)}`, `${themeId}-sub`);
+          return {
+            id: subId,
+            label: sub.label,
+            checked: !!sub.checked,
+            custom: !!sub.custom
+          };
+        }).filter(Boolean)
+      : [];
+    nextThematics.push({
+      id: themeId,
+      label: theme.label,
+      checked: !!theme.checked,
+      custom: !!theme.custom,
+      subs
+    });
+  });
+
+  const previousJson = JSON.stringify(state.thematics);
+  const nextJson = JSON.stringify(nextThematics);
+  const changed = previousJson !== nextJson;
+
+  state.thematics = nextThematics;
+  return changed;
+}
+
+function normalizeSources(raw) {
+  const generatedIdPattern = /\\turn\d+file\d+$/i;
+  const sanitizeUrl = (value) => {
+    if (typeof value !== 'string') {
+      return '';
+    }
+
+    let candidate = value.trim();
+    if (!candidate) {
+      return '';
+    }
+
+    candidate = candidate.replace(/[),.;]+$/u, '');
+
+    const urlPattern = /^https?:\/\/[^\s]+$/i;
+    if (!urlPattern.test(candidate)) {
+      return '';
+    }
+
+    return candidate;
+  };
+
+  const cleanupLabel = (value) => {
+    if (typeof value !== 'string') {
+      return '';
+    }
+
+    let normalized = value.replace(/\s+/gu, ' ').trim();
+    if (!normalized) {
+      return '';
+    }
+
+    normalized = normalized.replace(/[\s–—\-:;,]+$/u, '').trim();
+    return normalized;
+  };
+
+  const sanitizeList = (list, isWeb = false) => {
+    if (!Array.isArray(list)) {
+      return [];
+    }
+
+    const seen = new Set();
+    const result = [];
+
+    list.forEach((entry) => {
+      let label = '';
+      let href = null;
+
+      if (typeof entry === 'string') {
+        const normalized = entry.replace(/\s+/gu, ' ').trim();
+        if (!normalized) {
+          return;
+        }
+
+        if (generatedIdPattern.test(normalized)) {
+          return;
+        }
+
+        if (isWeb) {
+          const matches = normalized.match(/https?:\/\/\S+/g);
+          if (matches && matches.length > 0) {
+            const candidate = matches[matches.length - 1];
+            const sanitized = sanitizeUrl(candidate);
+            if (sanitized) {
+              href = sanitized;
+              const prefix = cleanupLabel(normalized.slice(0, normalized.lastIndexOf(candidate)));
+              label = prefix || sanitized;
+            }
+          }
+        }
+
+        if (!label) {
+          label = cleanupLabel(normalized);
+        }
+      } else if (entry && typeof entry === 'object') {
+        const possibleLabel = cleanupLabel(
+          entry.label ?? entry.name ?? entry.title ?? entry.value ?? entry.text ?? ''
+        );
+        if (possibleLabel) {
+          label = possibleLabel;
+        }
+
+        if (isWeb) {
+          const possibleUrl = entry.url ?? entry.href ?? entry.link ?? null;
+          if (typeof possibleUrl === 'string') {
+            const sanitized = sanitizeUrl(possibleUrl);
+            if (sanitized) {
+              href = sanitized;
+            }
+          }
+        }
+
+        if (!label && typeof entry.id === 'string') {
+          const candidate = cleanupLabel(entry.id);
+          if (candidate && !generatedIdPattern.test(entry.id)) {
+            label = candidate;
+          }
+        }
+
+        if (!label && isWeb && href) {
+          label = href;
+        }
+      } else {
+        return;
+      }
+
+      if (!label) {
+        return;
+      }
+
+      const key = isWeb ? (href || label) : label;
+      if (seen.has(key)) {
+        return;
+      }
+
+      seen.add(key);
+      result.push({ label, href: href || null });
+    });
+
+    return result;
+  };
+
+  if (!raw || typeof raw !== 'object') {
+    return { internal: [], web: [] };
+  }
+
+  return {
+    internal: sanitizeList(raw.internal, false),
+    web: sanitizeList(raw.web, true)
+  };
+}
+
 function renderMarkdown(markdown) {
   const raw = marked.parse(markdown, { mangle: false, headerIds: false });
   const sanitized = DOMPurify.sanitize(raw, { ADD_ATTR: ['target'] });
@@ -2299,7 +2924,7 @@ function resetState() {
   elements.finalMarkdown.value = '';
   renderMessages();
   renderThematics();
-  const message = 'Session réinitialisée. Sélectionnez vos thématiques puis envoyez un message pour démarrer. Tapez /final pour assembler la version complète.';
+  const message = `Session réinitialisée. Sélectionnez vos thématiques puis envoyez un message pour démarrer. Tapez /final pour assembler la version complète.`;
   if (!window.OPENAI_ENABLED) {
     updateStatus('OPENAI désactivé : configurez OPENAI_API_KEY et VECTOR_STORE_ID.', true);
   } else {
