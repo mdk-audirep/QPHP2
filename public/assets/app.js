@@ -78,53 +78,227 @@ function hasAnyThematicSelection() {
   return state.thematics.some((theme) => theme.checked || theme.subs.some((sub) => sub.checked));
 }
 
-function collectSelectedThematics() {
-  return state.thematics.reduce((acc, theme) => {
-    const selectedSubs = theme.subs.filter((sub) => sub.checked).map((sub) => sub.label);
-    if (theme.checked || selectedSubs.length > 0) {
-      acc.push({
-        label: theme.label,
-        subs: selectedSubs,
-        themeSelected: theme.checked
+  sanitizedEntries.forEach((entry) => {
+    const key = normalizeText(entry.label);
+    const existing = key ? existingMap.get(key) : null;
+
+    const baseThemeId = existing?.id || computeStableThematicId(entry.label);
+    const themeId = ensureUniqueId(baseThemeId, 'theme');
+
+    const subs = [];
+    const existingSubMap = new Map();
+    if (existing && Array.isArray(existing.subs)) {
+      existing.subs.forEach((sub) => {
+        if (!sub || typeof sub.label !== 'string') {
+          return;
+        }
+        const subKey = normalizeText(sub.label);
+        if (!subKey || existingSubMap.has(subKey)) {
+          return;
+        }
+        existingSubMap.set(subKey, sub);
       });
     }
-    return acc;
-  }, []);
-}
 
-function formatSelectedThematicsMessage() {
-  const selections = collectSelectedThematics();
-  if (selections.length === 0) {
-    return '';
-  }
+    const normalizedSubs = Array.isArray(entry.subs) ? entry.subs : [];
 
-  const parts = selections.map((entry) => {
-    if (entry.subs.length > 0) {
-      const subList = entry.subs.join(', ');
-      if (entry.themeSelected) {
-        return `${entry.label} – sous-thématiques : ${subList}`;
-      }
-      return `${entry.label} (sous-thématiques : ${subList})`;
-    }
-    return entry.label;
+    normalizedSubs.forEach((subLabel) => {
+      const subKey = normalizeText(subLabel);
+      const existingSub = subKey ? existingSubMap.get(subKey) : null;
+      const baseSubId = existingSub?.id || `${themeId}-${computeStableThematicId(subLabel)}`;
+      const subId = ensureUniqueId(baseSubId, `${themeId}-sub`);
+      subs.push({
+        id: subId,
+        label: subLabel,
+        checked: existingSub?.checked ?? true,
+        custom: existingSub?.custom ?? false
+      });
+    });
+
+    matchedKeys.add(key);
+    nextThematics.push({
+      id: themeId,
+      label: entry.label,
+      checked: existing?.checked ?? true,
+      custom: existing?.custom ?? false,
+      subs
+    });
   });
 
-  return `Thématiques sélectionnées : ${parts.join(' ; ')}.`;
+  state.thematics.forEach((theme) => {
+    if (!theme) {
+      return;
+    }
+    const key = typeof theme.label === 'string' ? normalizeText(theme.label) : '';
+    if (key && matchedKeys.has(key)) {
+      return;
+    }
+    const hasSelection = !!theme.checked || (Array.isArray(theme.subs) && theme.subs.some((sub) => sub && sub.checked));
+    if (!theme.custom && !hasSelection) {
+      return;
+    }
+    const themeId = ensureUniqueId(theme.id || computeStableThematicId(theme.label), 'theme');
+    const subs = Array.isArray(theme.subs)
+      ? theme.subs.map((sub) => {
+          if (!sub) {
+            return null;
+          }
+          const subId = ensureUniqueId(sub.id || `${themeId}-${computeStableThematicId(sub.label)}`, `${themeId}-sub`);
+          return {
+            id: subId,
+            label: sub.label,
+            checked: !!sub.checked,
+            custom: !!sub.custom
+          };
+        }).filter(Boolean)
+      : [];
+    nextThematics.push({
+      id: themeId,
+      label: theme.label,
+      checked: !!theme.checked,
+      custom: !!theme.custom,
+      subs
+    });
+  });
+
+  const previousJson = JSON.stringify(state.thematics);
+  const nextJson = JSON.stringify(nextThematics);
+  const changed = previousJson !== nextJson;
+
+  state.thematics = nextThematics;
+  return changed;
 }
 
-function updateValidateThematicsState() {
-  if (!elements.validateThematicsButton) {
-    return;
+function normalizeSources(raw) {
+  const generatedIdPattern = /\\turn\d+file\d+$/i;
+  const sanitizeUrl = (value) => {
+    if (typeof value !== 'string') {
+      return '';
+    }
+
+    let candidate = value.trim();
+    if (!candidate) {
+      return '';
+    }
+
+    candidate = candidate.replace(/[),.;]+$/u, '');
+
+    const urlPattern = /^https?:\/\/[^\s]+$/i;
+    if (!urlPattern.test(candidate)) {
+      return '';
+    }
+
+    return candidate;
+  };
+
+  const cleanupLabel = (value) => {
+    if (typeof value !== 'string') {
+      return '';
+    }
+
+    let normalized = value.replace(/\s+/gu, ' ').trim();
+    if (!normalized) {
+      return '';
+    }
+
+    normalized = normalized.replace(/[\s–—\-:;,]+$/u, '').trim();
+    return normalized;
+  };
+
+  const sanitizeList = (list, isWeb = false) => {
+    if (!Array.isArray(list)) {
+      return [];
+    }
+
+    const seen = new Set();
+    const result = [];
+
+    list.forEach((entry) => {
+      let label = '';
+      let href = null;
+
+      if (typeof entry === 'string') {
+        const normalized = entry.replace(/\s+/gu, ' ').trim();
+        if (!normalized) {
+          return;
+        }
+
+        if (generatedIdPattern.test(normalized)) {
+          return;
+        }
+
+        if (isWeb) {
+          const matches = normalized.match(/https?:\/\/\S+/g);
+          if (matches && matches.length > 0) {
+            const candidate = matches[matches.length - 1];
+            const sanitized = sanitizeUrl(candidate);
+            if (sanitized) {
+              href = sanitized;
+              const prefix = cleanupLabel(normalized.slice(0, normalized.lastIndexOf(candidate)));
+              label = prefix || sanitized;
+            }
+          }
+        }
+
+        if (!label) {
+          label = cleanupLabel(normalized);
+        }
+      } else if (entry && typeof entry === 'object') {
+        const possibleLabel = cleanupLabel(
+          entry.label ?? entry.name ?? entry.title ?? entry.value ?? entry.text ?? ''
+        );
+        if (possibleLabel) {
+          label = possibleLabel;
+        }
+
+        if (isWeb) {
+          const possibleUrl = entry.url ?? entry.href ?? entry.link ?? null;
+          if (typeof possibleUrl === 'string') {
+            const sanitized = sanitizeUrl(possibleUrl);
+            if (sanitized) {
+              href = sanitized;
+            }
+          }
+        }
+
+        if (!label && typeof entry.id === 'string') {
+          const candidate = cleanupLabel(entry.id);
+          if (candidate && !generatedIdPattern.test(entry.id)) {
+            label = candidate;
+          }
+        }
+
+        if (!label && isWeb && href) {
+          label = href;
+        }
+      } else {
+        return;
+      }
+
+      if (!label) {
+        return;
+      }
+
+      const key = isWeb ? (href || label) : label;
+      if (seen.has(key)) {
+        return;
+      }
+
+      seen.add(key);
+      result.push({ label, href: href || null });
+    });
+
+    return result;
+  };
+
+  if (!raw || typeof raw !== 'object') {
+    return { internal: [], web: [] };
   }
-  elements.validateThematicsButton.disabled = !hasAnyThematicSelection();
-}
 
-function normalizeText(value) {
-  return value
-    .toString()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase();
+  return {
+    internal: sanitizeList(raw.internal, false),
+    web: sanitizeList(raw.web, true)
+  };
 }
 
 function escapeHtml(text) {

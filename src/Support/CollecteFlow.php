@@ -94,7 +94,7 @@ final class CollecteFlow
             'instructions' => [
                 "Suggère quelques thématiques classiques si l'utilisateur ne sait pas par où commencer.",
                 "Pose ensuite la question suivante : «{{prompt}}».",
-                'Après ta réponse naturelle, ajoute un bloc de code Markdown ```json { "thematique_suggestions": [ { "label": "<nom de la thématique>", "sous_thematiques": ["<sous-thématique 1>", "<sous-thématique 2>"] } ] } ``` en respectant exactement ce format.',
+                "Après ta réponse, ajoute dans un bloc de code ```json``` un objet au format { \"thematique_suggestions\": [ { \"label\": \"...\", \"sous_thematiques\": [\"...\"] }, ... ] } récapitulant tes propositions (chaque sous-thématique est une chaîne).",
             ],
         ],
         [
