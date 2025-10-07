@@ -1739,9 +1739,16 @@ function updateStreamingAssistantMessage(message, delta) {
   renderMessages();
 }
 
-function finalizeStreamingAssistantMessage(message, content, rawSources) {
+function finalizeStreamingAssistantMessage(message, content, rawSources, collecteStateFromBackend) {
   console.log('[finalizeStreaming] 🎬 DÉBUT');
   console.log('[finalizeStreaming] content:', content ? content.substring(0, 200) : 'undefined');
+  console.log('[finalizeStreaming] collecteStateFromBackend:', collecteStateFromBackend);
+  
+  // *** MISE À JOUR CRITIQUE : Mettre à jour collecteState AVANT handleAssistantState ***
+  if (collecteStateFromBackend) {
+    console.log('[finalizeStreaming] 📦 Mise à jour collecteState depuis backend');
+    state.collecteState = collecteStateFromBackend;
+  }
   
   const finalContent = content || message.content;
   message.content = finalContent;
@@ -1751,7 +1758,7 @@ function finalizeStreamingAssistantMessage(message, content, rawSources) {
   message.hasSourceSection = rendered.hasSourceSection;
   renderMessages();
   
-  console.log('[finalizeStreaming] ➡️ Appel handleAssistantState');
+  console.log('[finalizeStreaming] ➡️ Appel handleAssistantState avec collecteState:', state.collecteState);
   handleAssistantState(finalContent);
   console.log('[finalizeStreaming] ✅ FIN');
 }
@@ -1869,11 +1876,12 @@ async function streamApi(endpoint, body) {
     throw new Error('Réponse incomplète reçue depuis le serveur.');
   }
 
-  finalizeStreamingAssistantMessage(
-    message,
-    finalEnvelope.assistantMarkdown || message.content,
-    finalEnvelope.sources
-  );
+finalizeStreamingAssistantMessage(
+  message,
+  finalEnvelope.assistantMarkdown || message.content,
+  finalEnvelope.sources,
+  finalEnvelope.collecteState  // ← AJOUT DU 4ème PARAMÈTRE
+);
 
   return {
     envelope: finalEnvelope,
@@ -1956,21 +1964,31 @@ async function sendMessageFlow({
   try {
     let envelope;
 
-    if (!state.sessionId) {
-      envelope = await callApi(endpoint, requestBody);
-      pushMessage('assistant', envelope.assistantMarkdown, { sources: envelope.sources });
-    } else {
-      const result = await streamApi(endpoint, requestBody);
-      envelope = result.envelope;
-      if (!result.streamed) {
-        pushMessage('assistant', envelope.assistantMarkdown, { sources: envelope.sources });
-      }
-    }
-
-    state.sessionId = envelope.sessionId;
-    state.phase = envelope.phase;
-    state.memory = envelope.memorySnapshot || {};
+if (!state.sessionId) {
+  envelope = await callApi(endpoint, requestBody);
+  
+  // *** MISE À JOUR CRITIQUE : Mettre à jour collecteState AVANT pushMessage ***
+  state.collecteState = envelope.collecteState || defaultCollecteState();
+  
+  pushMessage('assistant', envelope.assistantMarkdown, { sources: envelope.sources });
+} else {
+  const result = await streamApi(endpoint, requestBody);
+  envelope = result.envelope;
+  if (!result.streamed) {
+    // *** MISE À JOUR CRITIQUE : Mettre à jour collecteState AVANT pushMessage ***
     state.collecteState = envelope.collecteState || defaultCollecteState();
+    
+    pushMessage('assistant', envelope.assistantMarkdown, { sources: envelope.sources });
+  }
+}
+
+state.sessionId = envelope.sessionId;
+state.phase = envelope.phase;
+state.memory = envelope.memorySnapshot || {};
+// collecteState déjà mis à jour ci-dessus
+if (!envelope.collecteState) {
+  state.collecteState = envelope.collecteState || defaultCollecteState();
+}
     if (state.phase === 'collecte') {
       const pendingQuestion = state.collecteState?.pendingQuestion || null;
       const derivedTitle = formatCollecteQuestionTitle(pendingQuestion);
