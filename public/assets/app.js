@@ -381,6 +381,7 @@ function extractThematicSuggestionsFromJson(content) {
     try {
       parsed = JSON.parse(trimmed);
     } catch (error) {
+      console.warn('[extractJSON] Parse error:', error.message);
       return null;
     }
 
@@ -481,6 +482,7 @@ function extractThematicSuggestionsFromJson(content) {
     return normalizedSuggestions;
   };
 
+  // 1. Tentative depuis le DOM (après rendu)
   const attemptParseFromDom = () => {
     if (typeof document === 'undefined' || typeof document.querySelectorAll !== 'function') {
       return null;
@@ -541,6 +543,7 @@ function extractThematicSuggestionsFromJson(content) {
       const raw = (block && (block.textContent || block.innerText)) || '';
       const parsed = attemptParse(raw);
       if (parsed) {
+        console.log('[extractJSON] Succès depuis DOM');
         return parsed;
       }
     }
@@ -548,11 +551,13 @@ function extractThematicSuggestionsFromJson(content) {
     return null;
   };
 
+  // 2. Tentative depuis les blocs de code markdown
   const domSuggestions = attemptParseFromDom();
   if (domSuggestions) {
     return domSuggestions;
   }
 
+  console.log('[extractJSON] Tentative depuis regex markdown');
   const codeBlockPattern = /```[ \t]*([a-z0-9_-]+)?\s*([\s\S]*?)```/gi;
   let codeMatch = codeBlockPattern.exec(content);
   while (codeMatch) {
@@ -560,12 +565,15 @@ function extractThematicSuggestionsFromJson(content) {
     if (!lang || lang === 'json' || lang === 'jsonc') {
       const parsed = attemptParse(codeMatch[2]);
       if (parsed) {
+        console.log('[extractJSON] Succès depuis bloc markdown');
         return parsed;
       }
     }
     codeMatch = codeBlockPattern.exec(content);
   }
 
+  // 3. Tentative de recherche brute de "thematique_suggestions"
+  console.log('[extractJSON] Tentative de recherche brute');
   const lowerContent = content.toLowerCase();
   const marker = 'thematique_suggestions';
   let markerIndex = lowerContent.indexOf(marker);
@@ -588,6 +596,7 @@ function extractThematicSuggestionsFromJson(content) {
             const snippet = content.slice(start, position + 1);
             const parsed = attemptParse(snippet);
             if (parsed) {
+              console.log('[extractJSON] Succès depuis recherche brute');
               return parsed;
             }
             break;
@@ -599,6 +608,7 @@ function extractThematicSuggestionsFromJson(content) {
     markerIndex = lowerContent.indexOf(marker, markerIndex + marker.length);
   }
 
+  console.log('[extractJSON] Échec de toutes les tentatives');
   return null;
 }
 
@@ -1515,16 +1525,32 @@ function handleAssistantState(content) {
 
   let handledStateUpdate = false;
 
+  // *** CORRECTION PRINCIPALE : Question 7 - Thématiques ***
   if (isCollecteQuestionStep(content, QUESTION_STEPS.THEMES, ['thematiques'])) {
+    console.log('[DEBUG] Détection Question 7 - Thématiques');
+    console.log('[DEBUG] Contenu reçu:', content.substring(0, 500) + '...');
+
+    // Tentative d'extraction du JSON
     const jsonSuggestions = extractThematicSuggestionsFromJson(content);
+    console.log('[DEBUG] JSON extrait:', jsonSuggestions);
+
     let appliedJson = false;
     if (Array.isArray(jsonSuggestions) && jsonSuggestions.length > 0) {
       appliedJson = applyJsonThematicSuggestions(jsonSuggestions);
+      console.log('[DEBUG] JSON appliqué:', appliedJson);
     }
+
+    // Fallback : extraction simple si JSON échoue
     if (!appliedJson) {
+      console.log('[DEBUG] Fallback : extraction liste simple');
       const suggestions = extractThematicSuggestions(content);
-      applyThematicSuggestions(suggestions);
+      console.log('[DEBUG] Suggestions extraites:', suggestions);
+      if (suggestions.length > 0) {
+        applyThematicSuggestions(suggestions);
+      }
     }
+
+    // *** FIX CRITIQUE : Mise à jour de l'état de collecte ***
     state.collecteState.pendingQuestion = {
       id: 'thematiques',
       order: QUESTION_STEPS.THEMES,
@@ -1532,15 +1558,33 @@ function handleAssistantState(content) {
       prompt: '',
       index: QUESTION_STEPS.THEMES - 1
     };
+
     handledStateUpdate = true;
+
+    // *** FIX CRITIQUE : Forcer l'affichage du panneau ***
+    state.showThemes = true;
+    state.showSubThemes = false;
+    
+    // *** FIX CRITIQUE : Re-synchroniser et re-rendre ***
+    syncQuestionStepFromCollecteState();
+    renderThematics();
+    updateValidateThematicsState();
+
+    console.log('[DEBUG] État après traitement:', {
+      thematics: state.thematics.length,
+      showThemes: state.showThemes,
+      showSubThemes: state.showSubThemes
+    });
   }
 
+  // Sous-thématiques (Question 10)
   if (
     !handledStateUpdate &&
     isCollecteQuestionStep(content, QUESTION_STEPS.SUBTHEMES, [
       'sous-thematiques',
       'sous thematiques',
       'sousthematiques',
+      'sous-thematique',
       FALLBACK_SUBTHEMES_PENDING_ID
     ])
   ) {
@@ -1561,6 +1605,7 @@ function handleAssistantState(content) {
     handledStateUpdate = true;
   }
 
+  // Réinitialisation si nouvelle question détectée
   if (
     !handledStateUpdate &&
     normalizedContent.includes('question') &&
@@ -1570,6 +1615,7 @@ function handleAssistantState(content) {
     handledStateUpdate = true;
   }
 
+  // Synchronisation finale
   if (handledStateUpdate || hadPendingQuestion) {
     syncQuestionStepFromCollecteState();
   }
