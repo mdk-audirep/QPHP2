@@ -1366,7 +1366,9 @@ const QUESTION_STEPS = {
   THEMES: 7,
   SUBTHEMES: 10
 };
-
+console.log('[INIT] QUESTION_STEPS:', QUESTION_STEPS);
+console.log('[INIT] QUESTION_STEPS.THEMES:', QUESTION_STEPS.THEMES);
+console.log('[INIT] QUESTION_STEPS.SUBTHEMES:', QUESTION_STEPS.SUBTHEMES);
 const FALLBACK_SUBTHEMES_PENDING_ID = 'collecte-subthemes-fallback';
 
 function syncQuestionStepFromCollecteState() {
@@ -1520,14 +1522,30 @@ function isCollecteQuestionStep(content, step, expectedPendingIds = []) {
 }
 
 function handleAssistantState(content) {
+  console.log('[handleAssistantState] Appelée avec contenu:', content.substring(0, 200));
+  console.log('[handleAssistantState] collecteState:', state.collecteState);
+  
   const normalizedContent = normalizeText(content);
   const hadPendingQuestion = !!state.collecteState?.pendingQuestion;
 
   let handledStateUpdate = false;
 
-  // *** CORRECTION PRINCIPALE : Question 7 - Thématiques ***
-  if (isCollecteQuestionStep(content, QUESTION_STEPS.THEMES, ['thematiques'])) {
-    console.log('[DEBUG] Détection Question 7 - Thématiques');
+  // *** DÉTECTION AMÉLIORÉE DE LA QUESTION 7 ***
+  // On vérifie d'abord l'index de collecte pour savoir si on vient de répondre à Q7
+  const currentIndex = state.collecteState?.nextIndex ?? 0;
+  const isAfterQuestion7 = currentIndex === QUESTION_STEPS.THEMES;
+  const hasThematicSuggestionsInContent = content.includes('thematique_suggestions') || 
+                                          content.includes('thématiques prioritaires');
+  
+  console.log('[handleAssistantState] Détection Q7:', {
+    currentIndex,
+    isAfterQuestion7,
+    hasThematicSuggestionsInContent,
+    QUESTION_STEPS_THEMES: QUESTION_STEPS.THEMES
+  });
+
+  if (isAfterQuestion7 && hasThematicSuggestionsInContent) {
+    console.log('[DEBUG] ✅ Détection Question 7 - Thématiques confirmée');
     console.log('[DEBUG] Contenu reçu:', content.substring(0, 500) + '...');
 
     // Tentative d'extraction du JSON
@@ -1572,9 +1590,40 @@ function handleAssistantState(content) {
 
     console.log('[DEBUG] État après traitement:', {
       thematics: state.thematics.length,
+      thematicsDetails: state.thematics,
       showThemes: state.showThemes,
       showSubThemes: state.showSubThemes
     });
+  }
+
+  // Fallback : méthode originale avec isCollecteQuestionStep
+  if (!handledStateUpdate && isCollecteQuestionStep(content, QUESTION_STEPS.THEMES, ['thematiques'])) {
+    console.log('[DEBUG] ✅ Détection Question 7 via isCollecteQuestionStep');
+    
+    const jsonSuggestions = extractThematicSuggestionsFromJson(content);
+    let appliedJson = false;
+    if (Array.isArray(jsonSuggestions) && jsonSuggestions.length > 0) {
+      appliedJson = applyJsonThematicSuggestions(jsonSuggestions);
+    }
+    if (!appliedJson) {
+      const suggestions = extractThematicSuggestions(content);
+      applyThematicSuggestions(suggestions);
+    }
+
+    state.collecteState.pendingQuestion = {
+      id: 'thematiques',
+      order: QUESTION_STEPS.THEMES,
+      label: 'Thématiques',
+      prompt: '',
+      index: QUESTION_STEPS.THEMES - 1
+    };
+
+    handledStateUpdate = true;
+    state.showThemes = true;
+    state.showSubThemes = false;
+    syncQuestionStepFromCollecteState();
+    renderThematics();
+    updateValidateThematicsState();
   }
 
   // Sous-thématiques (Question 10)
@@ -1621,6 +1670,12 @@ function handleAssistantState(content) {
   }
 
   renderThematics();
+  
+  console.log('[handleAssistantState] Fin - État:', {
+    handledStateUpdate,
+    showThemes: state.showThemes,
+    thematics: state.thematics.length
+  });
 }
 
 function buildMemoryDelta() {
@@ -1667,6 +1722,10 @@ function updateStreamingAssistantMessage(message, delta) {
 }
 
 function finalizeStreamingAssistantMessage(message, content, rawSources) {
+  console.log('[finalizeStreaming] Appelée');
+  console.log('[finalizeStreaming] content:', content ? content.substring(0, 200) : 'undefined');
+  console.log('[finalizeStreaming] message.content:', message.content.substring(0, 200));
+  
   const finalContent = content || message.content;
   message.content = finalContent;
   message.sources = normalizeSources(rawSources);
@@ -1674,7 +1733,10 @@ function finalizeStreamingAssistantMessage(message, content, rawSources) {
   message.html = rendered.html;
   message.hasSourceSection = rendered.hasSourceSection;
   renderMessages();
+  
+  console.log('[finalizeStreaming] Avant handleAssistantState');
   handleAssistantState(finalContent);
+  console.log('[finalizeStreaming] Après handleAssistantState');
 }
 
 function parseSseEvent(rawEvent) {
