@@ -1522,120 +1522,135 @@ function isCollecteQuestionStep(content, step, expectedPendingIds = []) {
 }
 
 function handleAssistantState(content) {
-  console.log('[handleAssistantState] Appelée avec contenu:', content.substring(0, 200));
-  console.log('[handleAssistantState] collecteState:', state.collecteState);
+  console.log('[handleAssistantState] 🎬 Appelée');
+  console.log('[handleAssistantState] Contenu (300 premiers chars):', content.substring(0, 300));
+  console.log('[handleAssistantState] collecteState:', JSON.parse(JSON.stringify(state.collecteState)));
   
   const normalizedContent = normalizeText(content);
   const hadPendingQuestion = !!state.collecteState?.pendingQuestion;
 
   let handledStateUpdate = false;
 
-  // *** DÉTECTION AMÉLIORÉE DE LA QUESTION 7 ***
-  // On vérifie d'abord l'index de collecte pour savoir si on vient de répondre à Q7
+  // *** DÉTECTION DE LA QUESTION 7 ***
   const currentIndex = state.collecteState?.nextIndex ?? 0;
-  const isAfterQuestion7 = currentIndex === QUESTION_STEPS.THEMES;
-  const hasThematicSuggestionsInContent = content.includes('thematique_suggestions') || 
-                                          content.includes('thématiques prioritaires');
+  const pendingQuestionId = state.collecteState?.pendingQuestion?.id ?? '';
+  const answers = state.collecteState?.answers ?? {};
   
-  console.log('[handleAssistantState] Détection Q7:', {
+  // Question 7 = on vient de répondre à Q6 (contexte)
+  const justAnsweredQuestion6 = pendingQuestionId === 'contexte';
+  
+  // OU on est à l'index 6 (si nextIndex a déjà été incrémenté)
+  const isAtQuestion7Index = currentIndex === 6;
+  
+  // OU on a déjà répondu aux 6 premières questions
+  const hasAnswered6Questions = Object.keys(answers).length >= 6;
+  
+  // Détection par contenu
+  const hasThematicKeywords = normalizedContent.includes('thematiques') ||
+                               normalizedContent.includes('thematique') ||
+                               content.includes('thématiques') ||
+                               content.includes('thématique');
+  
+  const hasThematicSuggestionsJson = content.includes('thematique_suggestions');
+  
+  const hasQuestionPattern = /Q\s*7|question\s*7|7\s*[-–—]/i.test(content);
+  
+  const looksLikeQuestion7 = (hasThematicKeywords || hasThematicSuggestionsJson || hasQuestionPattern);
+  
+  console.log('[handleAssistantState] 🔍 Analyse Q7:', {
     currentIndex,
-    isAfterQuestion7,
-    hasThematicSuggestionsInContent,
-    QUESTION_STEPS_THEMES: QUESTION_STEPS.THEMES
+    pendingQuestionId,
+    justAnsweredQuestion6,
+    isAtQuestion7Index,
+    hasAnswered6Questions,
+    answersCount: Object.keys(answers).length,
+    hasThematicKeywords,
+    hasThematicSuggestionsJson,
+    hasQuestionPattern,
+    looksLikeQuestion7
   });
 
-  if (isAfterQuestion7 && hasThematicSuggestionsInContent) {
-    console.log('[DEBUG] ✅ Détection Question 7 - Thématiques confirmée');
-    console.log('[DEBUG] Contenu reçu:', content.substring(0, 500) + '...');
+  // CONDITION : On est à Q7 si on vient de répondre à Q6 ET le contenu parle de thématiques
+  if ((justAnsweredQuestion6 || isAtQuestion7Index || hasAnswered6Questions) && looksLikeQuestion7) {
+    
+    console.log('[DEBUG] ✅✅✅ QUESTION 7 DÉTECTÉE - Thématiques');
+    console.log('[DEBUG] Contenu complet (1000 chars):', content.substring(0, 1000));
 
-    // Tentative d'extraction du JSON
+    // Extraction JSON prioritaire
     const jsonSuggestions = extractThematicSuggestionsFromJson(content);
-    console.log('[DEBUG] JSON extrait:', jsonSuggestions);
+    console.log('[DEBUG] 📦 JSON extrait:', jsonSuggestions);
 
     let appliedJson = false;
     if (Array.isArray(jsonSuggestions) && jsonSuggestions.length > 0) {
       appliedJson = applyJsonThematicSuggestions(jsonSuggestions);
-      console.log('[DEBUG] JSON appliqué:', appliedJson);
+      console.log('[DEBUG] ✅ JSON appliqué:', appliedJson, '- Thématiques:', state.thematics.length);
     }
 
-    // Fallback : extraction simple si JSON échoue
+    // Fallback : extraction simple depuis listes markdown
     if (!appliedJson) {
-      console.log('[DEBUG] Fallback : extraction liste simple');
+      console.log('[DEBUG] ⚠️ Fallback : extraction liste simple');
       const suggestions = extractThematicSuggestions(content);
-      console.log('[DEBUG] Suggestions extraites:', suggestions);
+      console.log('[DEBUG] 📝 Suggestions extraites:', suggestions);
       if (suggestions.length > 0) {
-        applyThematicSuggestions(suggestions);
+        const applied = applyThematicSuggestions(suggestions);
+        console.log('[DEBUG] ✅ Suggestions appliquées:', applied, '- Thématiques:', state.thematics.length);
+      } else {
+        console.warn('[DEBUG] ❌ Aucune suggestion trouvée - Utilisation blueprint par défaut');
+        // Dernier recours : utiliser le blueprint par défaut
+        state.thematics = cloneThematicList(DEFAULT_THEMATICS_BLUEPRINT);
+        console.log('[DEBUG] 🔧 Blueprint appliqué:', state.thematics.length, 'thématiques');
       }
     }
 
-    // *** FIX CRITIQUE : Mise à jour de l'état de collecte ***
+    // *** MISE À JOUR DE L'ÉTAT ***
     state.collecteState.pendingQuestion = {
       id: 'thematiques',
-      order: QUESTION_STEPS.THEMES,
+      order: 7,
       label: 'Thématiques',
       prompt: '',
-      index: QUESTION_STEPS.THEMES - 1
+      index: 6 // 0-based
     };
 
     handledStateUpdate = true;
 
-    // *** FIX CRITIQUE : Forcer l'affichage du panneau ***
+    // *** ACTIVATION DE L'AFFICHAGE ***
     state.showThemes = true;
     state.showSubThemes = false;
+    state.currentQuestionStep = QUESTION_STEPS.THEMES;
     
-    // *** FIX CRITIQUE : Re-synchroniser et re-rendre ***
-    syncQuestionStepFromCollecteState();
-    renderThematics();
-    updateValidateThematicsState();
-
-    console.log('[DEBUG] État après traitement:', {
+    console.log('[DEBUG] 🎨 Avant synchronisation:', {
       thematics: state.thematics.length,
-      thematicsDetails: state.thematics,
       showThemes: state.showThemes,
-      showSubThemes: state.showSubThemes
+      thematicsList: state.thematics.map(t => t.label)
     });
-  }
-
-  // Fallback : méthode originale avec isCollecteQuestionStep
-  if (!handledStateUpdate && isCollecteQuestionStep(content, QUESTION_STEPS.THEMES, ['thematiques'])) {
-    console.log('[DEBUG] ✅ Détection Question 7 via isCollecteQuestionStep');
     
-    const jsonSuggestions = extractThematicSuggestionsFromJson(content);
-    let appliedJson = false;
-    if (Array.isArray(jsonSuggestions) && jsonSuggestions.length > 0) {
-      appliedJson = applyJsonThematicSuggestions(jsonSuggestions);
-    }
-    if (!appliedJson) {
-      const suggestions = extractThematicSuggestions(content);
-      applyThematicSuggestions(suggestions);
-    }
-
-    state.collecteState.pendingQuestion = {
-      id: 'thematiques',
-      order: QUESTION_STEPS.THEMES,
-      label: 'Thématiques',
-      prompt: '',
-      index: QUESTION_STEPS.THEMES - 1
-    };
-
-    handledStateUpdate = true;
-    state.showThemes = true;
-    state.showSubThemes = false;
+    // *** SYNCHRONISATION ET RENDU ***
     syncQuestionStepFromCollecteState();
     renderThematics();
     updateValidateThematicsState();
+
+    console.log('[DEBUG] 🎨 Après synchronisation:', {
+      thematics: state.thematics.length,
+      showThemes: state.showThemes,
+      showSubThemes: state.showSubThemes,
+      checkboxPanel: document.querySelector('.checkbox-panel'),
+      panelHidden: document.querySelector('.checkbox-panel')?.classList.contains('is-hidden'),
+      panelClasses: document.querySelector('.checkbox-panel')?.className
+    });
   }
 
   // Sous-thématiques (Question 10)
   if (
     !handledStateUpdate &&
-    isCollecteQuestionStep(content, QUESTION_STEPS.SUBTHEMES, [
+    (pendingQuestionId === 'thematiques' || // On vient de répondre à Q7
+     currentIndex === 9 || // Question 10 = index 9
+     isCollecteQuestionStep(content, QUESTION_STEPS.SUBTHEMES, [
       'sous-thematiques',
       'sous thematiques',
       'sousthematiques',
       'sous-thematique',
       FALLBACK_SUBTHEMES_PENDING_ID
-    ])
+    ]))
   ) {
     const thematicMatch = state.thematics.find((theme) =>
       normalizedContent.includes(normalizeText(theme.label))
@@ -1658,7 +1673,8 @@ function handleAssistantState(content) {
   if (
     !handledStateUpdate &&
     normalizedContent.includes('question') &&
-    state.collecteState?.pendingQuestion
+    state.collecteState?.pendingQuestion &&
+    state.collecteState.pendingQuestion.id !== 'thematiques' // Ne pas effacer Q7
   ) {
     state.collecteState.pendingQuestion = null;
     handledStateUpdate = true;
@@ -1671,10 +1687,12 @@ function handleAssistantState(content) {
 
   renderThematics();
   
-  console.log('[handleAssistantState] Fin - État:', {
+  console.log('[handleAssistantState] ✅ Fin - État:', {
     handledStateUpdate,
     showThemes: state.showThemes,
-    thematics: state.thematics.length
+    thematics: state.thematics.length,
+    currentQuestionStep: state.currentQuestionStep,
+    pendingQuestion: state.collecteState?.pendingQuestion?.id
   });
 }
 
@@ -1722,9 +1740,8 @@ function updateStreamingAssistantMessage(message, delta) {
 }
 
 function finalizeStreamingAssistantMessage(message, content, rawSources) {
-  console.log('[finalizeStreaming] Appelée');
+  console.log('[finalizeStreaming] 🎬 DÉBUT');
   console.log('[finalizeStreaming] content:', content ? content.substring(0, 200) : 'undefined');
-  console.log('[finalizeStreaming] message.content:', message.content.substring(0, 200));
   
   const finalContent = content || message.content;
   message.content = finalContent;
@@ -1734,9 +1751,9 @@ function finalizeStreamingAssistantMessage(message, content, rawSources) {
   message.hasSourceSection = rendered.hasSourceSection;
   renderMessages();
   
-  console.log('[finalizeStreaming] Avant handleAssistantState');
+  console.log('[finalizeStreaming] ➡️ Appel handleAssistantState');
   handleAssistantState(finalContent);
-  console.log('[finalizeStreaming] Après handleAssistantState');
+  console.log('[finalizeStreaming] ✅ FIN');
 }
 
 function parseSseEvent(rawEvent) {
