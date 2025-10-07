@@ -488,9 +488,26 @@ function extractThematicSuggestionsFromJson(content) {
 
     let candidates = [];
     try {
-      candidates = Array.from(
+      const dataAttributeMatches = Array.from(
         document.querySelectorAll('code[data-json-marker="thematique_suggestions"]')
       );
+      const idMatches = Array.from(
+        document.querySelectorAll('code[id^="assistant-thematique-suggestions-"]')
+      );
+      const seenNodes = new Set();
+      candidates = [];
+      dataAttributeMatches.forEach((node) => {
+        if (node && !seenNodes.has(node)) {
+          seenNodes.add(node);
+          candidates.push(node);
+        }
+      });
+      idMatches.forEach((node) => {
+        if (node && !seenNodes.has(node)) {
+          seenNodes.add(node);
+          candidates.push(node);
+        }
+      });
     } catch (error) {
       return null;
     }
